@@ -30,7 +30,8 @@ class BybitClient:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
         self.session = HTTP(
-            testnet=settings.testnet,
+            testnet=False,
+            demo=settings.is_demo,
             api_key=settings.api_key or None,
             api_secret=settings.api_secret or None,
             recv_window=settings.recv_window,
@@ -157,4 +158,3 @@ def _format_decimal(value: float) -> str:
     except InvalidOperation as exc:
         raise ValueError(f"Invalid decimal value: {value}") from exc
     return format(decimal, "f")
-
