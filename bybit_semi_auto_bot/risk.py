@@ -12,6 +12,14 @@ class RiskPrices:
     take_profit_percent: float
 
 
+@dataclass(frozen=True)
+class PositionSize:
+    quantity: float
+    risk_amount: float
+    position_value: float
+    estimated_margin: float
+
+
 def calculate_risk_prices(
     side: str,
     entry_price: float,
@@ -47,6 +55,39 @@ def calculate_risk_prices(
         take_profit=take_profit,
         stop_percent=stop_percent,
         take_profit_percent=resolved_take_profit_percent,
+    )
+
+
+def calculate_position_size(
+    entry_price: float,
+    stop_loss: float,
+    balance: float,
+    risk_percent: float,
+    leverage: float = 1,
+) -> PositionSize:
+    if entry_price <= 0:
+        raise ValueError("Entry price must be greater than zero.")
+    if balance <= 0:
+        raise ValueError("Wallet balance must be greater than zero.")
+    if risk_percent <= 0:
+        raise ValueError("Risk percent must be greater than zero.")
+    if leverage <= 0:
+        raise ValueError("Leverage must be greater than zero.")
+
+    stop_distance = abs(entry_price - stop_loss)
+    if stop_distance <= 0:
+        raise ValueError("Stop loss must be different from entry price.")
+
+    risk_amount = balance * risk_percent / 100
+    quantity = risk_amount / stop_distance
+    position_value = quantity * entry_price
+    estimated_margin = position_value / leverage
+
+    return PositionSize(
+        quantity=quantity,
+        risk_amount=risk_amount,
+        position_value=position_value,
+        estimated_margin=estimated_margin,
     )
 
 

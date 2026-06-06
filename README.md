@@ -64,6 +64,16 @@ The order panel can calculate stop loss and take profit automatically before you
 - `Risk/reward` mode uses `RR`. Example: stop `1%` and RR `3` means take profit is `3%` away.
 - `Profit percent` mode uses the direct `Profit %` value instead of RR.
 - Long and short calculations are mirrored automatically.
+- `Auto quantity` calculates position size from wallet balance and `Risk % balance`.
+- `Leverage` is used to estimate required margin for the calculated position.
+
+Position size formula:
+
+```text
+risk_amount = wallet_balance * risk_percent / 100
+quantity = risk_amount / abs(entry_price - stop_loss)
+estimated_margin = quantity * entry_price / leverage
+```
 
 Example for a long at 100 USDT:
 
@@ -71,6 +81,18 @@ Example for a long at 100 USDT:
 - RR: `3`
 - Stop loss: `99`
 - Take profit: `103`
+
+If wallet balance is 1000 USDT and risk is 1%, the risk amount is 10 USDT. With a 1 USDT stop distance, quantity is 10 contracts/coins before exchange lot-size rounding.
+
+## Margin And Leverage
+
+The order panel includes:
+
+- `Leverage`
+- `Margin`: `Cross` or `Isolated`
+- `Apply Margin/Leverage`
+
+Apply these settings before opening a position. Bybit may reject the request if the symbol, account mode, open orders, or current position state does not allow changing margin mode or leverage.
 
 ## API Key Permissions
 
@@ -87,6 +109,8 @@ This first version supports:
 - EMA signal preview.
 - Demo/live selector.
 - Automatic stop loss and take profit calculation by risk/reward or profit percent.
+- Automatic position size calculation from wallet risk percent.
+- Margin mode and leverage controls.
 - Manual long/short market orders.
 - Optional stop loss and take profit attached to orders.
 - Manual market close for the current position.

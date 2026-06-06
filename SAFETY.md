@@ -7,6 +7,8 @@ Before live trading:
 - Keep `BYBIT_TRADING_MODE=demo` until the full flow is tested.
 - Create API keys without withdrawal permission.
 - Start with the smallest possible quantity.
+- Keep leverage low while testing.
+- Check the calculated quantity before every order; higher leverage lowers margin requirement but does not reduce stop-loss risk.
 - Confirm that symbol, quantity, stop loss, and take profit are correct before pressing an order button.
 - Recheck the top-bar trading mode before every order.
 - Keep Bybit's web interface open as a backup way to close positions.

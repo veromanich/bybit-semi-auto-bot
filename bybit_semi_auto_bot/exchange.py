@@ -117,6 +117,26 @@ class BybitClient:
             payload["takeProfit"] = _format_decimal(take_profit)
         return self.session.place_order(**payload)
 
+    def set_leverage(self, symbol: str, leverage: float) -> dict[str, Any]:
+        leverage_text = _format_decimal(leverage)
+        return self.session.set_leverage(
+            category=self.settings.category,
+            symbol=symbol,
+            buyLeverage=leverage_text,
+            sellLeverage=leverage_text,
+        )
+
+    def switch_margin_mode(self, symbol: str, margin_mode: str, leverage: float) -> dict[str, Any]:
+        leverage_text = _format_decimal(leverage)
+        trade_mode = 1 if margin_mode == "isolated" else 0
+        return self.session.switch_margin_mode(
+            category=self.settings.category,
+            symbol=symbol,
+            tradeMode=trade_mode,
+            buyLeverage=leverage_text,
+            sellLeverage=leverage_text,
+        )
+
     def close_position_market(self, position: PositionSnapshot) -> dict[str, Any]:
         close_side = "Sell" if position.side == "Buy" else "Buy"
         return self.session.place_order(

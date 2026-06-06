@@ -8,7 +8,7 @@ from typing import Callable, Literal, TypeVar
 
 from .config import Settings, load_settings
 from .exchange import BybitClient, MarketSnapshot, PositionSnapshot
-from .risk import RiskPrices, calculate_risk_prices, format_price
+from .risk import PositionSize, RiskPrices, calculate_position_size, calculate_risk_prices, format_price
 from .strategy import Signal, ema_signal
 
 
@@ -19,18 +19,23 @@ class TradingApp(tk.Tk):
     def __init__(self, settings: Settings) -> None:
         super().__init__()
         self.title("Bybit Futures Semi-Auto Bot")
-        self.geometry("820x560")
-        self.minsize(760, 520)
+        self.geometry("960x720")
+        self.minsize(860, 680)
 
         self.settings = settings
         self.client = BybitClient(settings)
         self.market: MarketSnapshot | None = None
         self.position: PositionSnapshot | None = None
         self.signal: Signal | None = None
+        self.wallet_balance: float | None = None
 
         self.symbol_var = tk.StringVar(value=settings.symbol)
         self.mode_var = tk.StringVar(value=_mode_label(settings.trading_mode))
         self.qty_var = tk.StringVar(value=str(settings.default_qty))
+        self.auto_qty_var = tk.BooleanVar(value=False)
+        self.risk_percent_var = tk.StringVar(value="1")
+        self.leverage_var = tk.StringVar(value="1")
+        self.margin_mode_var = tk.StringVar(value="Cross")
         self.stop_loss_var = tk.StringVar(value="")
         self.take_profit_var = tk.StringVar(value="")
         self.auto_risk_var = tk.BooleanVar(value=True)
@@ -101,50 +106,74 @@ class TradingApp(tk.Tk):
         ttk.Label(right, text="Quantity").grid(row=0, column=0, sticky="w", pady=4)
         ttk.Entry(right, textvariable=self.qty_var).grid(row=0, column=1, sticky="ew", pady=4)
 
-        ttk.Checkbutton(right, text="Auto SL/TP", variable=self.auto_risk_var).grid(
+        ttk.Checkbutton(right, text="Auto quantity", variable=self.auto_qty_var).grid(
             row=1, column=0, columnspan=2, sticky="w", pady=(8, 4)
         )
 
-        ttk.Label(right, text="Stop %").grid(row=2, column=0, sticky="w", pady=4)
-        ttk.Entry(right, textvariable=self.stop_percent_var).grid(row=2, column=1, sticky="ew", pady=4)
+        ttk.Label(right, text="Risk % balance").grid(row=2, column=0, sticky="w", pady=4)
+        ttk.Entry(right, textvariable=self.risk_percent_var).grid(row=2, column=1, sticky="ew", pady=4)
 
-        ttk.Label(right, text="Target mode").grid(row=3, column=0, sticky="w", pady=4)
+        ttk.Label(right, text="Leverage").grid(row=3, column=0, sticky="w", pady=4)
+        ttk.Entry(right, textvariable=self.leverage_var).grid(row=3, column=1, sticky="ew", pady=4)
+
+        ttk.Label(right, text="Margin").grid(row=4, column=0, sticky="w", pady=4)
+        ttk.Combobox(
+            right,
+            textvariable=self.margin_mode_var,
+            values=("Cross", "Isolated"),
+            state="readonly",
+        ).grid(row=4, column=1, sticky="ew", pady=4)
+
+        ttk.Button(right, text="Apply Margin/Leverage", command=self.confirm_apply_trade_settings).grid(
+            row=5, column=0, columnspan=2, sticky="ew", pady=(10, 4)
+        )
+
+        ttk.Separator(right).grid(row=6, column=0, columnspan=2, sticky="ew", pady=10)
+
+        ttk.Checkbutton(right, text="Auto SL/TP", variable=self.auto_risk_var).grid(
+            row=7, column=0, columnspan=2, sticky="w", pady=(4, 4)
+        )
+
+        ttk.Label(right, text="Stop %").grid(row=8, column=0, sticky="w", pady=4)
+        ttk.Entry(right, textvariable=self.stop_percent_var).grid(row=8, column=1, sticky="ew", pady=4)
+
+        ttk.Label(right, text="Target mode").grid(row=9, column=0, sticky="w", pady=4)
         ttk.Combobox(
             right,
             textvariable=self.risk_mode_var,
             values=("Risk/reward", "Profit percent"),
             state="readonly",
-        ).grid(row=3, column=1, sticky="ew", pady=4)
+        ).grid(row=9, column=1, sticky="ew", pady=4)
 
-        ttk.Label(right, text="RR").grid(row=4, column=0, sticky="w", pady=4)
-        ttk.Entry(right, textvariable=self.reward_risk_var).grid(row=4, column=1, sticky="ew", pady=4)
+        ttk.Label(right, text="RR").grid(row=10, column=0, sticky="w", pady=4)
+        ttk.Entry(right, textvariable=self.reward_risk_var).grid(row=10, column=1, sticky="ew", pady=4)
 
-        ttk.Label(right, text="Profit %").grid(row=5, column=0, sticky="w", pady=4)
-        ttk.Entry(right, textvariable=self.take_profit_percent_var).grid(row=5, column=1, sticky="ew", pady=4)
+        ttk.Label(right, text="Profit %").grid(row=11, column=0, sticky="w", pady=4)
+        ttk.Entry(right, textvariable=self.take_profit_percent_var).grid(row=11, column=1, sticky="ew", pady=4)
 
-        ttk.Button(right, text="Calc Long SL/TP", command=lambda: self.calculate_and_fill_risk("Buy")).grid(
-            row=6, column=0, columnspan=2, sticky="ew", pady=(12, 4)
+        ttk.Button(right, text="Calc Long Risk", command=lambda: self.calculate_and_fill_order("Buy")).grid(
+            row=12, column=0, columnspan=2, sticky="ew", pady=(12, 4)
         )
-        ttk.Button(right, text="Calc Short SL/TP", command=lambda: self.calculate_and_fill_risk("Sell")).grid(
-            row=7, column=0, columnspan=2, sticky="ew", pady=4
+        ttk.Button(right, text="Calc Short Risk", command=lambda: self.calculate_and_fill_order("Sell")).grid(
+            row=13, column=0, columnspan=2, sticky="ew", pady=4
         )
 
-        ttk.Separator(right).grid(row=8, column=0, columnspan=2, sticky="ew", pady=10)
+        ttk.Separator(right).grid(row=14, column=0, columnspan=2, sticky="ew", pady=10)
 
-        ttk.Label(right, text="Stop loss").grid(row=9, column=0, sticky="w", pady=4)
-        ttk.Entry(right, textvariable=self.stop_loss_var).grid(row=9, column=1, sticky="ew", pady=4)
+        ttk.Label(right, text="Stop loss").grid(row=15, column=0, sticky="w", pady=4)
+        ttk.Entry(right, textvariable=self.stop_loss_var).grid(row=15, column=1, sticky="ew", pady=4)
 
-        ttk.Label(right, text="Take profit").grid(row=10, column=0, sticky="w", pady=4)
-        ttk.Entry(right, textvariable=self.take_profit_var).grid(row=10, column=1, sticky="ew", pady=4)
+        ttk.Label(right, text="Take profit").grid(row=16, column=0, sticky="w", pady=4)
+        ttk.Entry(right, textvariable=self.take_profit_var).grid(row=16, column=1, sticky="ew", pady=4)
 
         ttk.Button(right, text="Open Long", command=lambda: self.confirm_order("Buy")).grid(
-            row=11, column=0, columnspan=2, sticky="ew", pady=(16, 6)
+            row=17, column=0, columnspan=2, sticky="ew", pady=(16, 6)
         )
         ttk.Button(right, text="Open Short", command=lambda: self.confirm_order("Sell")).grid(
-            row=12, column=0, columnspan=2, sticky="ew", pady=6
+            row=18, column=0, columnspan=2, sticky="ew", pady=6
         )
         ttk.Button(right, text="Close Position", command=self.confirm_close_position).grid(
-            row=13, column=0, columnspan=2, sticky="ew", pady=6
+            row=19, column=0, columnspan=2, sticky="ew", pady=6
         )
 
         status = ttk.Frame(self, padding=(12, 0, 12, 12))
@@ -169,6 +198,7 @@ class TradingApp(tk.Tk):
         self.market = market
         self.signal = signal
         self.position = position
+        self.wallet_balance = balance
 
         mark = f", mark {market.mark_price:.2f}" if market.mark_price else ""
         self.market_var.set(f"{market.symbol}: last {market.last_price:.2f}{mark} | {_mode_label(self.settings.trading_mode)}")
@@ -214,15 +244,35 @@ class TradingApp(tk.Tk):
         )
         return prices
 
+    def calculate_and_fill_order(self, side: Literal["Buy", "Sell"]) -> RiskPrices | None:
+        prices = self.calculate_and_fill_risk(side)
+        if prices is None:
+            return None
+
+        if self.auto_qty_var.get():
+            try:
+                size = self._calculate_position_size(prices)
+            except ValueError as exc:
+                messagebox.showerror("Position size", str(exc))
+                return None
+
+            self.qty_var.set(format_price(size.quantity))
+            self.status_var.set(
+                f"Risk {size.risk_amount:.2f} USDT | Qty {format_price(size.quantity)} | "
+                f"Margin ~{size.estimated_margin:.2f} USDT"
+            )
+
+        return prices
+
     def confirm_order(self, side: Literal["Buy", "Sell"]) -> None:
         symbol = self.symbol_var.get().strip().upper()
-        qty = _parse_float(self.qty_var.get(), "Quantity")
         risk_prices = None
         if self.auto_risk_var.get():
-            risk_prices = self.calculate_and_fill_risk(side)
+            risk_prices = self.calculate_and_fill_order(side)
             if risk_prices is None:
                 return
 
+        qty = _parse_float(self.qty_var.get(), "Quantity")
         stop_loss = _parse_optional_float(self.stop_loss_var.get(), "Stop loss")
         take_profit = _parse_optional_float(self.take_profit_var.get(), "Take profit")
         if qty is None or stop_loss is False or take_profit is False:
@@ -230,12 +280,15 @@ class TradingApp(tk.Tk):
 
         direction = "LONG" if side == "Buy" else "SHORT"
         mode = _mode_label(self.settings.trading_mode)
+        margin_mode = self.margin_mode_var.get()
+        leverage = self.leverage_var.get().strip()
         entry_line = f"\nReference entry: {risk_prices.entry_price:.2f}" if risk_prices else ""
         confirmed = messagebox.askyesno(
             "Confirm order",
             f"Open {direction} market order on {mode}?\n\n"
             f"Symbol: {symbol}\nQty: {qty}{entry_line}\n"
-            f"Stop loss: {stop_loss or '-'}\nTake profit: {take_profit or '-'}",
+            f"Stop loss: {stop_loss or '-'}\nTake profit: {take_profit or '-'}\n"
+            f"Margin: {margin_mode} | Leverage: {leverage}x",
         )
         if not confirmed:
             return
@@ -244,6 +297,33 @@ class TradingApp(tk.Tk):
             return self.client.place_market_order(symbol, side, qty, stop_loss, take_profit)
 
         self._run_background("Placing order...", work, lambda result: self._order_done(result, "Order placed"))
+
+    def confirm_apply_trade_settings(self) -> None:
+        symbol = self.symbol_var.get().strip().upper()
+        leverage = _parse_float(self.leverage_var.get(), "Leverage")
+        if leverage is None:
+            return
+
+        margin_mode = _margin_mode_value(self.margin_mode_var.get())
+        mode = _mode_label(self.settings.trading_mode)
+        confirmed = messagebox.askyesno(
+            "Apply settings",
+            f"Apply margin/leverage on {mode}?\n\n"
+            f"Symbol: {symbol}\nMargin: {self.margin_mode_var.get()}\nLeverage: {leverage}x",
+        )
+        if not confirmed:
+            return
+
+        def work() -> dict:
+            margin_result = self.client.switch_margin_mode(symbol, margin_mode, leverage)
+            leverage_result = self.client.set_leverage(symbol, leverage)
+            return {"margin": margin_result, "leverage": leverage_result}
+
+        self._run_background(
+            "Applying margin/leverage...",
+            work,
+            lambda _result: self._settings_done(symbol, margin_mode, leverage),
+        )
 
     def confirm_close_position(self) -> None:
         if not self.position:
@@ -285,6 +365,25 @@ class TradingApp(tk.Tk):
             stop_percent=stop_percent,
             take_profit_percent=take_profit_percent,
         )
+
+    def _calculate_position_size(self, prices: RiskPrices) -> PositionSize:
+        if self.wallet_balance is None:
+            raise ValueError("Wallet balance is not loaded. Add API keys and refresh data.")
+
+        risk_percent = _require_float(self.risk_percent_var.get(), "Risk % balance")
+        leverage = _require_float(self.leverage_var.get(), "Leverage")
+        return calculate_position_size(
+            entry_price=prices.entry_price,
+            stop_loss=prices.stop_loss,
+            balance=self.wallet_balance,
+            risk_percent=risk_percent,
+            leverage=leverage,
+        )
+
+    def _settings_done(self, symbol: str, margin_mode: str, leverage: float) -> None:
+        label = "Isolated" if margin_mode == "isolated" else "Cross"
+        self.status_var.set(f"{symbol}: {label} margin, {leverage:g}x leverage applied")
+        self.refresh_all()
 
     def _order_done(self, result: dict, message: str) -> None:
         order_id = result.get("result", {}).get("orderId", "-")
@@ -352,6 +451,10 @@ def _mode_label(mode: str) -> str:
 
 def _mode_value(label: str) -> str:
     return "live" if label.lower() == "live" else "demo"
+
+
+def _margin_mode_value(label: str) -> str:
+    return "isolated" if label.lower() == "isolated" else "cross"
 
 
 def main() -> None:
