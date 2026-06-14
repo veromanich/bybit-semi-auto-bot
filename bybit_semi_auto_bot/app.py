@@ -178,23 +178,15 @@ class TradingApp(ctk.CTk):
         side_bar.set("Купить")
         side_bar.grid(row=1, column=0, sticky="ew", padx=16, pady=(0, 12))
 
-        tabs = ctk.CTkTabview(parent, fg_color="#14161c")
-        tabs.grid(row=2, column=0, sticky="nsew", padx=10)
+        ticket = ctk.CTkScrollableFrame(parent, fg_color="#14161c")
+        ticket.grid(row=2, column=0, sticky="nsew", padx=10)
+        ticket.grid_columnconfigure(0, weight=1)
         parent.grid_rowconfigure(2, weight=1)
 
-        order_tab = tabs.add("Заявка")
-        risk_tab = tabs.add("Риск")
-        exit_tab = tabs.add("Выход")
-        settings_tab = tabs.add("Настройки")
-        errors_tab = tabs.add("Ошибки")
-        for tab in (order_tab, risk_tab, exit_tab, settings_tab, errors_tab):
-            tab.grid_columnconfigure(0, weight=1)
-
-        self._build_order_tab(order_tab)
-        self._build_risk_tab(risk_tab)
-        self._build_exit_tab(exit_tab)
-        self._build_settings_tab(settings_tab)
-        self._build_errors_tab(errors_tab)
+        self._build_order_section(ticket, 0)
+        self._build_risk_section(ticket, 1)
+        self._build_exit_section(ticket, 2)
+        self._build_settings_section(ticket, 3)
 
         summary = ctk.CTkFrame(parent, fg_color="#171920")
         summary.grid(row=3, column=0, sticky="ew", padx=16, pady=(8, 0))
@@ -208,49 +200,64 @@ class TradingApp(ctk.CTk):
             row=5, column=0, sticky="ew", padx=16, pady=(0, 16)
         )
 
-    def _build_order_tab(self, frame: ctk.CTkFrame) -> None:
-        self._field(frame, "Тип заявки", ctk.CTkOptionMenu(frame, variable=self.order_kind_var, values=list(ORDER_KINDS), command=lambda _v: self._rebuild_order_fields()), 0)
-        self._field(frame, "Количество", ctk.CTkEntry(frame, textvariable=self.qty_var), 1)
+    def _section(self, parent: ctk.CTkFrame, title: str, row: int) -> ctk.CTkFrame:
+        section = ctk.CTkFrame(parent, fg_color="#171920", corner_radius=8)
+        section.grid(row=row, column=0, sticky="ew", padx=6, pady=6)
+        section.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(section, text=title, font=ctk.CTkFont(size=14, weight="bold")).grid(
+            row=0, column=0, sticky="w", padx=10, pady=(10, 4)
+        )
+        return section
+
+    def _build_order_section(self, parent: ctk.CTkFrame, row: int) -> None:
+        frame = self._section(parent, "Параметры заявки", row)
+        order_buttons = ctk.CTkSegmentedButton(frame, values=list(ORDER_KINDS), command=self._set_order_kind)
+        order_buttons.set(self.order_kind_var.get())
+        order_buttons.grid(row=1, column=0, sticky="ew", padx=10, pady=6)
+        self._field(frame, "Количество", ctk.CTkEntry(frame, textvariable=self.qty_var), 2)
         self.order_fields_frame = ctk.CTkFrame(frame, fg_color="transparent")
-        self.order_fields_frame.grid(row=2, column=0, sticky="ew")
+        self.order_fields_frame.grid(row=3, column=0, sticky="ew")
         self.order_fields_frame.grid_columnconfigure(1, weight=1)
         self._rebuild_order_fields()
 
-    def _build_risk_tab(self, frame: ctk.CTkFrame) -> None:
-        ctk.CTkCheckBox(frame, text="Авто количество", variable=self.auto_qty_var).grid(row=0, column=0, sticky="w", padx=8, pady=(10, 6))
-        self._field(frame, "Риск, % баланса", ctk.CTkEntry(frame, textvariable=self.risk_percent_var), 1)
-        ctk.CTkCheckBox(frame, text="Авто SL/TP", variable=self.auto_risk_var).grid(row=2, column=0, sticky="w", padx=8, pady=(14, 6))
-        self._field(frame, "Стоп, %", ctk.CTkEntry(frame, textvariable=self.stop_percent_var), 3)
+    def _build_risk_section(self, parent: ctk.CTkFrame, row: int) -> None:
+        frame = self._section(parent, "Риск и расчет", row)
+        ctk.CTkCheckBox(frame, text="Авто количество", variable=self.auto_qty_var).grid(row=1, column=0, sticky="w", padx=8, pady=(10, 6))
+        self._field(frame, "Риск, % баланса", ctk.CTkEntry(frame, textvariable=self.risk_percent_var), 2)
+        ctk.CTkCheckBox(frame, text="Авто SL/TP", variable=self.auto_risk_var).grid(row=3, column=0, sticky="w", padx=8, pady=(14, 6))
+        self._field(frame, "Стоп, %", ctk.CTkEntry(frame, textvariable=self.stop_percent_var), 4)
         self._field(
             frame,
             "Цель",
             ctk.CTkOptionMenu(frame, variable=self.risk_mode_var, values=["Риск/прибыль", "Процент профита"]),
-            4,
+            5,
         )
-        self._field(frame, "RR", ctk.CTkEntry(frame, textvariable=self.reward_risk_var), 5)
-        self._field(frame, "Профит, %", ctk.CTkEntry(frame, textvariable=self.take_profit_percent_var), 6)
+        self._field(frame, "RR", ctk.CTkEntry(frame, textvariable=self.reward_risk_var), 6)
+        self._field(frame, "Профит, %", ctk.CTkEntry(frame, textvariable=self.take_profit_percent_var), 7)
         ctk.CTkButton(frame, text="Рассчитать для покупки", command=lambda: self.calculate_and_fill_order("Buy")).grid(
-            row=7, column=0, sticky="ew", padx=8, pady=(14, 4)
+            row=8, column=0, sticky="ew", padx=8, pady=(14, 4)
         )
         ctk.CTkButton(frame, text="Рассчитать для продажи", fg_color="#303136", hover_color="#3b3c42", command=lambda: self.calculate_and_fill_order("Sell")).grid(
-            row=8, column=0, sticky="ew", padx=8, pady=4
+            row=9, column=0, sticky="ew", padx=8, pady=(4, 10)
         )
 
-    def _build_exit_tab(self, frame: ctk.CTkFrame) -> None:
-        self._field(frame, "Стоп-лосс", ctk.CTkEntry(frame, textvariable=self.stop_loss_var), 0)
-        self._field(frame, "Тейк-профит", ctk.CTkEntry(frame, textvariable=self.take_profit_var), 1)
+    def _build_exit_section(self, parent: ctk.CTkFrame, row: int) -> None:
+        frame = self._section(parent, "Уровни выхода", row)
+        self._field(frame, "Стоп-лосс", ctk.CTkEntry(frame, textvariable=self.stop_loss_var), 1)
+        self._field(frame, "Тейк-профит", ctk.CTkEntry(frame, textvariable=self.take_profit_var), 2)
         ctk.CTkButton(frame, text="Очистить SL/TP", fg_color="#303136", hover_color="#3b3c42", command=self._clear_protection).grid(
-            row=2, column=0, sticky="ew", padx=8, pady=(12, 4)
+            row=3, column=0, sticky="ew", padx=8, pady=(12, 10)
         )
 
-    def _build_settings_tab(self, frame: ctk.CTkFrame) -> None:
-        self._field(frame, "Плечо", ctk.CTkEntry(frame, textvariable=self.leverage_var), 0)
-        self._field(frame, "Маржа", ctk.CTkOptionMenu(frame, variable=self.margin_mode_var, values=["Кросс", "Изолированная"]), 1)
+    def _build_settings_section(self, parent: ctk.CTkFrame, row: int) -> None:
+        frame = self._section(parent, "Дополнительные настройки", row)
+        self._field(frame, "Плечо", ctk.CTkEntry(frame, textvariable=self.leverage_var), 1)
+        self._field(frame, "Маржа", ctk.CTkOptionMenu(frame, variable=self.margin_mode_var, values=["Кросс", "Изолированная"]), 2)
         ctk.CTkCheckBox(frame, text="Применять перед заявкой", variable=self.apply_settings_before_order_var).grid(
-            row=2, column=0, sticky="w", padx=8, pady=(12, 4)
+            row=3, column=0, sticky="w", padx=8, pady=(12, 4)
         )
         ctk.CTkButton(frame, text="Применить маржу/плечо", command=self.confirm_apply_trade_settings).grid(
-            row=3, column=0, sticky="ew", padx=8, pady=(12, 4)
+            row=4, column=0, sticky="ew", padx=8, pady=(12, 10)
         )
 
     def _build_errors_tab(self, frame: ctk.CTkFrame) -> None:
@@ -309,6 +316,10 @@ class TradingApp(ctk.CTk):
                 ctk.CTkOptionMenu(self.order_fields_frame, variable=self.trigger_by_var, values=list(TRIGGER_BY)),
                 row,
             )
+
+    def _set_order_kind(self, value: str) -> None:
+        self.order_kind_var.set(value)
+        self._rebuild_order_fields()
 
     def refresh_all(self) -> None:
         symbol = self.symbol_var.get().strip().upper()

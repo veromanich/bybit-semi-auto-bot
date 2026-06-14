@@ -4,7 +4,7 @@ Desktop Python app for semi-automatic Bybit USDT perpetual futures trading.
 
 The bot does not enter trades by itself. It shows market data, account state, and a simple EMA signal; every order must be confirmed by the user in the desktop interface.
 
-The interface is Russian-language and built with `customtkinter` as a desktop trading ticket: buy/sell selector, order type, risk controls, exit levels, extra settings, open orders, and order summary.
+The interface is Russian-language and built with `customtkinter` as a desktop trading ticket: buy/sell selector, visible order type selector, risk controls, exit levels, extra settings, open orders, and order summary.
 
 ## Safety Defaults
 
@@ -60,13 +60,12 @@ Use `live` only after testing the full flow.
 
 ## Risk Tools
 
-The order panel is split into tabs:
+The order ticket keeps the key controls visible in one scrollable panel:
 
-- `Заявка`: order type, quantity, limit price, time in force, conditional trigger.
-- `Риск`: automatic quantity and automatic SL/TP calculation.
-- `Выход`: manual stop loss and take profit fields.
-- `Настройки`: leverage and cross/isolated margin controls.
-- `Ошибки`: latest API/application errors.
+- `Параметры заявки`: order type, quantity, limit price, time in force, conditional trigger.
+- `Риск и расчет`: automatic quantity and automatic SL/TP calculation.
+- `Уровни выхода`: manual stop loss and take profit fields.
+- `Дополнительные настройки`: leverage and cross/isolated margin controls.
 
 Bybit V5 futures support `Market` and `Limit` as the base `orderType`. Conditional orders are created by adding `triggerPrice`, so the app exposes:
 
