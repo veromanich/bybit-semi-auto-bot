@@ -64,6 +64,7 @@ The order panel is split into tabs:
 - `Risk`: automatic quantity and automatic SL/TP calculation.
 - `Protection`: manual stop loss and take profit fields.
 - `Margin`: leverage and cross/isolated margin controls.
+- `Errors`: latest API/application errors.
 
 Bybit V5 futures support `Market` and `Limit` as the base `orderType`. Conditional orders are created by adding `triggerPrice`, so the app exposes:
 
@@ -73,6 +74,13 @@ Bybit V5 futures support `Market` and `Limit` as the base `orderType`. Condition
 - `Conditional Limit`
 
 For limit orders, fill `Limit price`. For conditional orders, fill `Trigger price`; `Trigger direction` can be automatic or set manually.
+
+The app hides fields that are not used by the selected order type:
+
+- `Market`: quantity only.
+- `Limit`: quantity, limit price, time in force.
+- `Conditional Market`: quantity, trigger price, trigger direction, trigger price source.
+- `Conditional Limit`: quantity, limit price, time in force, trigger price, trigger direction, trigger price source.
 
 The risk tab can calculate stop loss and take profit automatically before you confirm a trade.
 
@@ -109,7 +117,11 @@ The `Margin` tab includes:
 - `Apply Margin/Leverage`
 - `Apply before order`
 
-Apply these settings before opening a position, or keep `Apply before order` enabled so the app attempts to apply them immediately before sending the order. Bybit may reject changing margin mode if the symbol, account mode, open orders, or current position state does not allow it. The app still tries to apply leverage even if the margin-mode switch returns a warning.
+Apply these settings before opening a position, or enable `Apply before order` so the app attempts to apply them immediately before sending the order. `Apply before order` is off by default so margin/leverage warnings do not block ordinary order entry unexpectedly. Bybit may reject changing margin mode if the symbol, account mode, open orders, or current position state does not allow it. The app records those responses in the `Errors` tab.
+
+## Error Log
+
+The `Errors` tab stores the latest API/application errors during the session. If an order is rejected by Bybit, copy the newest line from this tab when debugging.
 
 ## API Key Permissions
 

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import datetime
 import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
@@ -51,7 +52,7 @@ class TradingApp(tk.Tk):
         self.risk_percent_var = tk.StringVar(value="1")
         self.leverage_var = tk.StringVar(value="1")
         self.margin_mode_var = tk.StringVar(value="Cross")
-        self.apply_settings_before_order_var = tk.BooleanVar(value=True)
+        self.apply_settings_before_order_var = tk.BooleanVar(value=False)
 
         self.auto_risk_var = tk.BooleanVar(value=False)
         self.stop_percent_var = tk.StringVar(value="1")
@@ -66,6 +67,10 @@ class TradingApp(tk.Tk):
         self.balance_var = tk.StringVar(value="-")
         self.position_var = tk.StringVar(value="No active position")
         self.signal_var = tk.StringVar(value="No signal loaded")
+        self.error_count_var = tk.StringVar(value="Errors: 0")
+        self.order_field_rows: dict[str, list[tk.Widget]] = {}
+        self.error_log: list[tuple[str, str]] = []
+        self.error_list: tk.Listbox | None = None
 
         self._build_ui()
         self.refresh_all()
@@ -132,6 +137,7 @@ class TradingApp(tk.Tk):
         self._build_risk_tab(notebook)
         self._build_protection_tab(notebook)
         self._build_margin_tab(notebook)
+        self._build_errors_tab(notebook)
 
         actions = ttk.Frame(right, padding=(0, 10, 0, 0))
         actions.grid(row=1, column=0, sticky="ew")
@@ -148,7 +154,9 @@ class TradingApp(tk.Tk):
 
         status = ttk.Frame(self, padding=(12, 0, 12, 12))
         status.grid(row=2, column=0, sticky="ew")
+        status.columnconfigure(0, weight=1)
         ttk.Label(status, textvariable=self.status_var).grid(row=0, column=0, sticky="w")
+        ttk.Label(status, textvariable=self.error_count_var).grid(row=0, column=1, sticky="e")
 
     def _build_order_tab(self, notebook: ttk.Notebook) -> None:
         frame = ttk.Frame(notebook, padding=12)
@@ -163,34 +171,61 @@ class TradingApp(tk.Tk):
         ttk.Label(frame, text="Quantity").grid(row=1, column=0, sticky="w", pady=4)
         ttk.Entry(frame, textvariable=self.qty_var).grid(row=1, column=1, sticky="ew", pady=4)
 
-        ttk.Label(frame, text="Limit price").grid(row=2, column=0, sticky="w", pady=4)
-        ttk.Entry(frame, textvariable=self.limit_price_var).grid(row=2, column=1, sticky="ew", pady=4)
+        limit_label = ttk.Label(frame, text="Limit price")
+        limit_entry = ttk.Entry(frame, textvariable=self.limit_price_var)
+        self._grid_order_row("limit_price", limit_label, limit_entry, row=2)
 
-        ttk.Label(frame, text="Time in force").grid(row=3, column=0, sticky="w", pady=4)
-        ttk.Combobox(frame, textvariable=self.time_in_force_var, values=TIME_IN_FORCE, state="readonly").grid(
-            row=3, column=1, sticky="ew", pady=4
-        )
+        tif_label = ttk.Label(frame, text="Time in force")
+        tif_box = ttk.Combobox(frame, textvariable=self.time_in_force_var, values=TIME_IN_FORCE, state="readonly")
+        self._grid_order_row("time_in_force", tif_label, tif_box, row=3)
 
-        ttk.Label(frame, text="Trigger price").grid(row=4, column=0, sticky="w", pady=4)
-        ttk.Entry(frame, textvariable=self.trigger_price_var).grid(row=4, column=1, sticky="ew", pady=4)
+        trigger_price_label = ttk.Label(frame, text="Trigger price")
+        trigger_price_entry = ttk.Entry(frame, textvariable=self.trigger_price_var)
+        self._grid_order_row("trigger_price", trigger_price_label, trigger_price_entry, row=4)
 
-        ttk.Label(frame, text="Trigger direction").grid(row=5, column=0, sticky="w", pady=4)
-        ttk.Combobox(
+        trigger_direction_label = ttk.Label(frame, text="Trigger direction")
+        trigger_direction_box = ttk.Combobox(
             frame,
             textvariable=self.trigger_direction_var,
             values=TRIGGER_DIRECTIONS,
             state="readonly",
-        ).grid(row=5, column=1, sticky="ew", pady=4)
-
-        ttk.Label(frame, text="Trigger by").grid(row=6, column=0, sticky="w", pady=4)
-        ttk.Combobox(frame, textvariable=self.trigger_by_var, values=TRIGGER_BY, state="readonly").grid(
-            row=6, column=1, sticky="ew", pady=4
         )
+        self._grid_order_row("trigger_direction", trigger_direction_label, trigger_direction_box, row=5)
 
-        ttk.Button(frame, text="Use market as limit price", command=self._fill_limit_from_market).grid(
-            row=7, column=0, columnspan=2, sticky="ew", pady=(12, 4)
-        )
+        trigger_by_label = ttk.Label(frame, text="Trigger by")
+        trigger_by_box = ttk.Combobox(frame, textvariable=self.trigger_by_var, values=TRIGGER_BY, state="readonly")
+        self._grid_order_row("trigger_by", trigger_by_label, trigger_by_box, row=6)
+
+        fill_limit_button = ttk.Button(frame, text="Use market as limit price", command=self._fill_limit_from_market)
+        fill_limit_button.grid(row=7, column=0, columnspan=2, sticky="ew", pady=(12, 4))
+        self.order_field_rows["fill_limit"] = [fill_limit_button]
         self._order_type_changed()
+
+    def _grid_order_row(self, key: str, label: tk.Widget, field: tk.Widget, row: int) -> None:
+        label.grid(row=row, column=0, sticky="w", pady=4)
+        field.grid(row=row, column=1, sticky="ew", pady=4)
+        self.order_field_rows[key] = [label, field]
+
+    def _build_errors_tab(self, notebook: ttk.Notebook) -> None:
+        frame = ttk.Frame(notebook, padding=12)
+        notebook.add(frame, text="Errors")
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+
+        list_frame = ttk.Frame(frame)
+        list_frame.grid(row=0, column=0, sticky="nsew")
+        list_frame.columnconfigure(0, weight=1)
+        list_frame.rowconfigure(0, weight=1)
+
+        self.error_list = tk.Listbox(list_frame, height=12)
+        self.error_list.grid(row=0, column=0, sticky="nsew")
+        scrollbar = ttk.Scrollbar(list_frame, orient="vertical", command=self.error_list.yview)
+        scrollbar.grid(row=0, column=1, sticky="ns")
+        self.error_list.configure(yscrollcommand=scrollbar.set)
+
+        ttk.Button(frame, text="Clear errors", command=self._clear_errors).grid(
+            row=1, column=0, sticky="ew", pady=(10, 0)
+        )
 
     def _build_risk_tab(self, notebook: ttk.Notebook) -> None:
         frame = ttk.Frame(notebook, padding=12)
@@ -547,9 +582,15 @@ class TradingApp(tk.Tk):
 
     def _settings_done(self, symbol: str, margin_mode: str, leverage: float, result: dict) -> None:
         label = "Isolated" if margin_mode == "isolated" else "Cross"
-        warning = result.get("margin_warning")
-        suffix = f" | Margin warning: {warning}" if warning else ""
+        warnings = [
+            f"Margin warning: {result['margin_warning']}" if result.get("margin_warning") else "",
+            f"Leverage warning: {result['leverage_warning']}" if result.get("leverage_warning") else "",
+        ]
+        warnings = [warning for warning in warnings if warning]
+        suffix = f" | {' | '.join(warnings)}" if warnings else ""
         self.status_var.set(f"{symbol}: {label} margin, {leverage:g}x leverage applied{suffix}")
+        for warning in warnings:
+            self._log_error(warning)
         self.refresh_all()
 
     def _apply_trade_settings_api(self, symbol: str, margin_mode: str, leverage: float) -> dict:
@@ -558,7 +599,10 @@ class TradingApp(tk.Tk):
             results["margin"] = self.client.switch_margin_mode(symbol, margin_mode, leverage)
         except Exception as exc:
             results["margin_warning"] = str(exc)
-        results["leverage"] = self.client.set_leverage(symbol, leverage)
+        try:
+            results["leverage"] = self.client.set_leverage(symbol, leverage)
+        except Exception as exc:
+            results["leverage_warning"] = str(exc)
         return results
 
     def _order_done(self, result: dict, message: str) -> None:
@@ -574,8 +618,26 @@ class TradingApp(tk.Tk):
         self.limit_price_var.set(format_price(self.market.last_price))
 
     def _order_type_changed(self) -> None:
-        if self.order_kind_var.get() == "Market":
+        order_kind = self.order_kind_var.get()
+        show_limit = "Limit" in order_kind
+        show_conditional = "Conditional" in order_kind
+
+        self._set_order_rows_visible(["limit_price", "fill_limit"], show_limit)
+        self._set_order_rows_visible(["time_in_force"], show_limit)
+        self._set_order_rows_visible(["trigger_price", "trigger_direction", "trigger_by"], show_conditional)
+
+        if order_kind == "Market":
             self.time_in_force_var.set("IOC")
+        elif self.time_in_force_var.get() == "IOC":
+            self.time_in_force_var.set("GTC")
+
+    def _set_order_rows_visible(self, keys: list[str], visible: bool) -> None:
+        for key in keys:
+            for widget in self.order_field_rows.get(key, []):
+                if visible:
+                    widget.grid()
+                else:
+                    widget.grid_remove()
 
     def _clear_protection(self) -> None:
         self.stop_loss_var.set("")
@@ -608,15 +670,37 @@ class TradingApp(tk.Tk):
             try:
                 result = func()
             except Exception as exc:
-                self.after(0, lambda: self._show_error(exc))
+                self.after(0, lambda exc=exc: self._show_error(exc))
                 return
             self.after(0, lambda: on_success(result))
 
         threading.Thread(target=runner, daemon=True).start()
 
     def _show_error(self, exc: Exception) -> None:
+        message = str(exc)
         self.status_var.set("Error")
-        messagebox.showerror("Bybit bot error", str(exc))
+        self._log_error(message)
+        messagebox.showerror("Bybit bot error", message)
+
+    def _log_error(self, message: str) -> None:
+        timestamp = datetime.now().strftime("%H:%M:%S")
+        self.error_log.append((timestamp, message))
+        if len(self.error_log) > 100:
+            self.error_log = self.error_log[-100:]
+
+        if self.error_list is not None:
+            self.error_list.delete(0, tk.END)
+            for item_time, item_message in self.error_log:
+                one_line = " ".join(item_message.split())
+                self.error_list.insert(tk.END, f"{item_time} | {one_line}")
+            self.error_list.yview_moveto(1)
+        self.error_count_var.set(f"Errors: {len(self.error_log)}")
+
+    def _clear_errors(self) -> None:
+        self.error_log.clear()
+        if self.error_list is not None:
+            self.error_list.delete(0, tk.END)
+        self.error_count_var.set("Errors: 0")
 
 
 def _format_position(position: PositionSnapshot | None) -> str:
