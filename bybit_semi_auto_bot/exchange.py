@@ -36,6 +36,19 @@ class InstrumentRules:
 
 
 @dataclass(frozen=True)
+class OpenOrder:
+    order_id: str
+    symbol: str
+    side: str
+    order_type: str
+    price: str
+    qty: str
+    trigger_price: str
+    status: str
+    created_time: str
+
+
+@dataclass(frozen=True)
 class OrderRequest:
     symbol: str
     side: str
@@ -133,6 +146,33 @@ class BybitClient:
             size=_to_float(active.get("size")),
             avg_price=_to_float(active.get("avgPrice")),
             unrealised_pnl=_to_float(active.get("unrealisedPnl")),
+        )
+
+    def get_open_orders(self, symbol: str) -> list[OpenOrder]:
+        if not self._has_credentials:
+            return []
+        response = self.session.get_open_orders(category=self.settings.category, symbol=symbol)
+        rows = response.get("result", {}).get("list", [])
+        return [
+            OpenOrder(
+                order_id=str(item.get("orderId", "")),
+                symbol=str(item.get("symbol", "")),
+                side=str(item.get("side", "")),
+                order_type=str(item.get("orderType", "")),
+                price=str(item.get("price", "")),
+                qty=str(item.get("qty", "")),
+                trigger_price=str(item.get("triggerPrice", "")),
+                status=str(item.get("orderStatus", "")),
+                created_time=str(item.get("createdTime", "")),
+            )
+            for item in rows
+        ]
+
+    def cancel_order(self, symbol: str, order_id: str) -> dict[str, Any]:
+        return self.session.cancel_order(
+            category=self.settings.category,
+            symbol=symbol,
+            orderId=order_id,
         )
 
     def place_market_order(

@@ -4,7 +4,7 @@ Desktop Python app for semi-automatic Bybit USDT perpetual futures trading.
 
 The bot does not enter trades by itself. It shows market data, account state, and a simple EMA signal; every order must be confirmed by the user in the desktop interface.
 
-The interface is Russian-language and shaped like a desktop trading ticket: buy/sell selector, order type, risk controls, exit levels, extra settings, and order summary.
+The interface is Russian-language and built with `customtkinter` as a desktop trading ticket: buy/sell selector, order type, risk controls, exit levels, extra settings, open orders, and order summary.
 
 ## Safety Defaults
 
@@ -156,3 +156,5 @@ This first version supports:
 - Manual long/short market orders.
 - Optional stop loss and take profit attached to orders.
 - Manual market close for the current position.
+- Open orders list.
+- Manual cancel for open orders.
