@@ -58,7 +58,23 @@ Use `live` only after testing the full flow.
 
 ## Risk Tools
 
-The order panel can calculate stop loss and take profit automatically before you confirm a trade.
+The order panel is split into tabs:
+
+- `Order`: order type, quantity, limit price, time in force, conditional trigger.
+- `Risk`: automatic quantity and automatic SL/TP calculation.
+- `Protection`: manual stop loss and take profit fields.
+- `Margin`: leverage and cross/isolated margin controls.
+
+Bybit V5 futures support `Market` and `Limit` as the base `orderType`. Conditional orders are created by adding `triggerPrice`, so the app exposes:
+
+- `Market`
+- `Limit`
+- `Conditional Market`
+- `Conditional Limit`
+
+For limit orders, fill `Limit price`. For conditional orders, fill `Trigger price`; `Trigger direction` can be automatic or set manually.
+
+The risk tab can calculate stop loss and take profit automatically before you confirm a trade.
 
 - `Stop %` is the distance from the current market price to stop loss.
 - `Risk/reward` mode uses `RR`. Example: stop `1%` and RR `3` means take profit is `3%` away.
@@ -86,13 +102,14 @@ If wallet balance is 1000 USDT and risk is 1%, the risk amount is 10 USDT. With 
 
 ## Margin And Leverage
 
-The order panel includes:
+The `Margin` tab includes:
 
 - `Leverage`
 - `Margin`: `Cross` or `Isolated`
 - `Apply Margin/Leverage`
+- `Apply before order`
 
-Apply these settings before opening a position. Bybit may reject the request if the symbol, account mode, open orders, or current position state does not allow changing margin mode or leverage.
+Apply these settings before opening a position, or keep `Apply before order` enabled so the app attempts to apply them immediately before sending the order. Bybit may reject changing margin mode if the symbol, account mode, open orders, or current position state does not allow it. The app still tries to apply leverage even if the margin-mode switch returns a warning.
 
 ## API Key Permissions
 

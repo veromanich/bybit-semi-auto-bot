@@ -26,6 +26,21 @@ class PositionSnapshot:
     unrealised_pnl: float
 
 
+@dataclass(frozen=True)
+class OrderRequest:
+    symbol: str
+    side: str
+    order_type: str
+    qty: float
+    price: float | None = None
+    trigger_price: float | None = None
+    trigger_direction: int | None = None
+    trigger_by: str | None = None
+    time_in_force: str | None = None
+    stop_loss: float | None = None
+    take_profit: float | None = None
+
+
 class BybitClient:
     def __init__(self, settings: Settings) -> None:
         self.settings = settings
@@ -115,6 +130,31 @@ class BybitClient:
             payload["stopLoss"] = _format_decimal(stop_loss)
         if take_profit:
             payload["takeProfit"] = _format_decimal(take_profit)
+        return self.session.place_order(**payload)
+
+    def place_order(self, request: OrderRequest) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "category": self.settings.category,
+            "symbol": request.symbol,
+            "side": request.side,
+            "orderType": request.order_type,
+            "qty": _format_decimal(request.qty),
+            "positionIdx": 0,
+        }
+        if request.price is not None:
+            payload["price"] = _format_decimal(request.price)
+        if request.time_in_force:
+            payload["timeInForce"] = request.time_in_force
+        if request.trigger_price is not None:
+            payload["triggerPrice"] = _format_decimal(request.trigger_price)
+        if request.trigger_direction is not None:
+            payload["triggerDirection"] = request.trigger_direction
+        if request.trigger_by:
+            payload["triggerBy"] = request.trigger_by
+        if request.stop_loss:
+            payload["stopLoss"] = _format_decimal(request.stop_loss)
+        if request.take_profit:
+            payload["takeProfit"] = _format_decimal(request.take_profit)
         return self.session.place_order(**payload)
 
     def set_leverage(self, symbol: str, leverage: float) -> dict[str, Any]:
