@@ -27,6 +27,15 @@ class PositionSnapshot:
 
 
 @dataclass(frozen=True)
+class InstrumentRules:
+    symbol: str
+    min_order_qty: str
+    qty_step: str
+    min_notional_value: str | None
+    tick_size: str
+
+
+@dataclass(frozen=True)
 class OrderRequest:
     symbol: str
     side: str
@@ -60,6 +69,21 @@ class BybitClient:
             last_price=_to_float(item.get("lastPrice")),
             mark_price=_optional_float(item.get("markPrice")),
             index_price=_optional_float(item.get("indexPrice")),
+        )
+
+    def get_instrument_rules(self, symbol: str) -> InstrumentRules:
+        response = self.session.get_instruments_info(category=self.settings.category, symbol=symbol)
+        item = _first_result_item(response, "list")
+        lot_size = item.get("lotSizeFilter", {})
+        price_filter = item.get("priceFilter", {})
+        return InstrumentRules(
+            symbol=item["symbol"],
+            min_order_qty=str(lot_size.get("minOrderQty", "0")),
+            qty_step=str(lot_size.get("qtyStep", "0")),
+            min_notional_value=(
+                str(lot_size["minNotionalValue"]) if lot_size.get("minNotionalValue") not in {None, ""} else None
+            ),
+            tick_size=str(price_filter.get("tickSize", "0")),
         )
 
     def get_klines(self, symbol: str, interval: str, limit: int = 200) -> list[dict[str, float]]:

@@ -82,6 +82,15 @@ The app hides fields that are not used by the selected order type:
 - `Conditional Market`: quantity, trigger price, trigger direction, trigger price source.
 - `Conditional Limit`: quantity, limit price, time in force, trigger price, trigger direction, trigger price source.
 
+After `Refresh`, the market panel shows instrument rules for the selected symbol:
+
+- minimum quantity
+- quantity step
+- price tick size
+- minimum order value, when Bybit returns it
+
+Before sending an order, the app rounds quantity down to `qtyStep`, rounds prices to `tickSize`, and blocks the order locally if quantity or order value is below Bybit's minimum.
+
 The risk tab can calculate stop loss and take profit automatically before you confirm a trade.
 
 - `Stop %` is the distance from the current market price to stop loss.

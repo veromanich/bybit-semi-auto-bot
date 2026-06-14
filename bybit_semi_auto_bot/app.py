@@ -2,13 +2,14 @@ from __future__ import annotations
 
 from dataclasses import replace
 from datetime import datetime
+from decimal import Decimal, ROUND_FLOOR, ROUND_HALF_UP
 import threading
 import tkinter as tk
 from tkinter import messagebox, ttk
 from typing import Callable, Literal, TypeVar
 
 from .config import Settings, load_settings
-from .exchange import BybitClient, MarketSnapshot, OrderRequest, PositionSnapshot
+from .exchange import BybitClient, InstrumentRules, MarketSnapshot, OrderRequest, PositionSnapshot
 from .risk import PositionSize, RiskPrices, calculate_position_size, calculate_risk_prices, format_price
 from .strategy import Signal, ema_signal
 
@@ -36,6 +37,7 @@ class TradingApp(tk.Tk):
         self.position: PositionSnapshot | None = None
         self.signal: Signal | None = None
         self.wallet_balance: float | None = None
+        self.instrument_rules: InstrumentRules | None = None
 
         self.symbol_var = tk.StringVar(value=settings.symbol)
         self.mode_var = tk.StringVar(value=_mode_label(settings.trading_mode))
@@ -67,6 +69,7 @@ class TradingApp(tk.Tk):
         self.balance_var = tk.StringVar(value="-")
         self.position_var = tk.StringVar(value="No active position")
         self.signal_var = tk.StringVar(value="No signal loaded")
+        self.rules_var = tk.StringVar(value="Instrument rules: not loaded")
         self.error_count_var = tk.StringVar(value="Errors: 0")
         self.order_field_rows: dict[str, list[tk.Widget]] = {}
         self.error_log: list[tuple[str, str]] = []
@@ -124,6 +127,7 @@ class TradingApp(tk.Tk):
         )
         ttk.Separator(left).grid(row=7, column=0, sticky="ew", pady=12)
         ttk.Label(left, textvariable=self.balance_var).grid(row=8, column=0, sticky="w")
+        ttk.Label(left, textvariable=self.rules_var, wraplength=520).grid(row=9, column=0, sticky="w", pady=(8, 0))
 
         right = ttk.LabelFrame(body, text="Manual Order", padding=10)
         right.grid(row=0, column=1, sticky="nsew", padx=(8, 0))
@@ -311,19 +315,24 @@ class TradingApp(tk.Tk):
         symbol = self.symbol_var.get().strip().upper()
         self.symbol_var.set(symbol)
 
-        def work() -> tuple[MarketSnapshot, Signal | None, PositionSnapshot | None, float | None]:
+        def work() -> tuple[MarketSnapshot, InstrumentRules, Signal | None, PositionSnapshot | None, float | None]:
             market = self.client.get_market_snapshot(symbol)
+            rules = self.client.get_instrument_rules(symbol)
             candles = self.client.get_klines(symbol, self.settings.interval)
             signal = ema_signal(candles)
             position = self.client.get_position(symbol)
             balance = self.client.get_wallet_balance()
-            return market, signal, position, balance
+            return market, rules, signal, position, balance
 
         self._run_background("Refreshing data...", work, self._apply_refresh_result)
 
-    def _apply_refresh_result(self, result: tuple[MarketSnapshot, Signal | None, PositionSnapshot | None, float | None]) -> None:
-        market, signal, position, balance = result
+    def _apply_refresh_result(
+        self,
+        result: tuple[MarketSnapshot, InstrumentRules, Signal | None, PositionSnapshot | None, float | None],
+    ) -> None:
+        market, rules, signal, position, balance = result
         self.market = market
+        self.instrument_rules = rules
         self.signal = signal
         self.position = position
         self.wallet_balance = balance
@@ -337,6 +346,7 @@ class TradingApp(tk.Tk):
         )
         self.position_var.set(_format_position(position))
         self.balance_var.set(f"USDT wallet balance: {balance:.2f}" if balance is not None else "USDT wallet balance: API key needed")
+        self.rules_var.set(_format_rules(rules))
         self.status_var.set("Ready")
 
     def change_trading_mode(self) -> None:
@@ -385,9 +395,12 @@ class TradingApp(tk.Tk):
                 messagebox.showerror("Position size", str(exc))
                 return None
 
-            self.qty_var.set(format_price(size.quantity))
+            quantity = size.quantity
+            if self.instrument_rules:
+                quantity = _round_decimal_str(str(quantity), self.instrument_rules.qty_step, ROUND_FLOOR)
+            self.qty_var.set(format_price(quantity))
             self.status_var.set(
-                f"Risk {size.risk_amount:.2f} USDT | Qty {format_price(size.quantity)} | "
+                f"Risk {size.risk_amount:.2f} USDT | Qty {format_price(quantity)} | "
                 f"Margin ~{size.estimated_margin:.2f} USDT"
             )
 
@@ -491,6 +504,9 @@ class TradingApp(tk.Tk):
         take_profit = _parse_optional_float(self.take_profit_var.get(), "Take profit")
         if qty is None or stop_loss is False or take_profit is False:
             return None
+        qty = self._normalize_quantity(qty)
+        if qty is None:
+            return None
 
         order_kind = self.order_kind_var.get()
         order_type = "Limit" if "Limit" in order_kind else "Market"
@@ -503,11 +519,19 @@ class TradingApp(tk.Tk):
             price = _parse_float(self.limit_price_var.get(), "Limit price")
             if price is None:
                 return None
+            price = self._normalize_price(price, "Limit price")
+            if price is None:
+                return None
+            self.limit_price_var.set(format_price(price))
 
         if "Conditional" in order_kind:
             trigger_price = _parse_float(self.trigger_price_var.get(), "Trigger price")
             if trigger_price is None:
                 return None
+            trigger_price = self._normalize_price(trigger_price, "Trigger price")
+            if trigger_price is None:
+                return None
+            self.trigger_price_var.set(format_price(trigger_price))
             try:
                 trigger_direction = self._resolve_trigger_direction(trigger_price)
             except ValueError as exc:
@@ -519,6 +543,17 @@ class TradingApp(tk.Tk):
         if order_type == "Market":
             time_in_force = "IOC"
 
+        reference_price = price or (self.market.last_price if self.market else None)
+        if reference_price is not None and not self._validate_min_notional(qty, reference_price):
+            return None
+
+        normalized_stop_loss = self._normalize_optional_price(stop_loss, "Stop loss")
+        normalized_take_profit = self._normalize_optional_price(take_profit, "Take profit")
+        if normalized_stop_loss is not None:
+            self.stop_loss_var.set(format_price(normalized_stop_loss))
+        if normalized_take_profit is not None:
+            self.take_profit_var.set(format_price(normalized_take_profit))
+
         return OrderRequest(
             symbol=symbol,
             side=side,
@@ -529,8 +564,8 @@ class TradingApp(tk.Tk):
             trigger_direction=trigger_direction,
             trigger_by=trigger_by,
             time_in_force=time_in_force,
-            stop_loss=stop_loss,
-            take_profit=take_profit,
+            stop_loss=normalized_stop_loss,
+            take_profit=normalized_take_profit,
         )
 
     def _calculate_risk(self, side: OrderSide) -> RiskPrices:
@@ -652,6 +687,7 @@ class TradingApp(tk.Tk):
 
     def _clear_loaded_market_state(self) -> None:
         self.market = None
+        self.instrument_rules = None
         self.position = None
         self.signal = None
         self.wallet_balance = None
@@ -659,9 +695,64 @@ class TradingApp(tk.Tk):
         self.position_var.set("No active position")
         self.signal_var.set("No signal loaded")
         self.balance_var.set("-")
+        self.rules_var.set("Instrument rules: not loaded")
 
     def _has_fresh_market(self, symbol: str) -> bool:
-        return bool(self.market and self.market.symbol == symbol)
+        return bool(self.market and self.market.symbol == symbol and self.instrument_rules and self.instrument_rules.symbol == symbol)
+
+    def _normalize_quantity(self, qty: float) -> float | None:
+        if not self.instrument_rules:
+            return qty
+
+        rounded = _round_decimal_str(str(qty), self.instrument_rules.qty_step, ROUND_FLOOR)
+        min_qty = _to_decimal(self.instrument_rules.min_order_qty)
+        if Decimal(str(rounded)) < min_qty:
+            min_text = _format_decimal(min_qty)
+            self.qty_var.set(min_text)
+            messagebox.showerror(
+                "Quantity too small",
+                f"Minimum quantity for {self.instrument_rules.symbol} is {min_text}.",
+            )
+            self._log_error(f"{self.instrument_rules.symbol} quantity below minimum. Minimum qty: {min_text}")
+            return None
+
+        if rounded != qty:
+            self.qty_var.set(format_price(rounded))
+            self.status_var.set(f"Quantity rounded to step {self.instrument_rules.qty_step}: {format_price(rounded)}")
+        return rounded
+
+    def _normalize_price(self, value: float, label: str) -> float | None:
+        if not self.instrument_rules:
+            return value
+        rounded = _round_decimal_str(str(value), self.instrument_rules.tick_size, ROUND_HALF_UP)
+        if rounded <= 0:
+            messagebox.showerror("Invalid price", f"{label} must be greater than zero.")
+            return None
+        if rounded != value:
+            self.status_var.set(f"{label} rounded to tick {self.instrument_rules.tick_size}: {format_price(rounded)}")
+        return rounded
+
+    def _normalize_optional_price(self, value: float | None | bool, label: str) -> float | None:
+        if value is None or value is False:
+            return None
+        return self._normalize_price(float(value), label)
+
+    def _validate_min_notional(self, qty: float, reference_price: float) -> bool:
+        if not self.instrument_rules or not self.instrument_rules.min_notional_value:
+            return True
+
+        notional = Decimal(str(qty)) * Decimal(str(reference_price))
+        min_notional = _to_decimal(self.instrument_rules.min_notional_value)
+        if notional >= min_notional:
+            return True
+
+        message = (
+            f"{self.instrument_rules.symbol} order value is below minimum. "
+            f"Current: {_format_decimal(notional)} USDT, minimum: {_format_decimal(min_notional)} USDT."
+        )
+        messagebox.showerror("Order value too small", message)
+        self._log_error(message)
+        return False
 
     def _run_background(self, status: str, func: Callable[[], T], on_success: Callable[[T], None]) -> None:
         self.status_var.set(status)
@@ -712,6 +803,14 @@ def _format_position(position: PositionSnapshot | None) -> str:
     )
 
 
+def _format_rules(rules: InstrumentRules) -> str:
+    min_notional = f" | min value {rules.min_notional_value} USDT" if rules.min_notional_value else ""
+    return (
+        f"Instrument rules: min qty {rules.min_order_qty} | qty step {rules.qty_step} | "
+        f"tick {rules.tick_size}{min_notional}"
+    )
+
+
 def _parse_float(value: str, label: str) -> float | None:
     try:
         parsed = float(value)
@@ -750,6 +849,23 @@ def _mode_value(label: str) -> str:
 
 def _margin_mode_value(label: str) -> str:
     return "isolated" if label.lower() == "isolated" else "cross"
+
+
+def _round_decimal_str(value: str, step: str, rounding: str) -> float:
+    decimal_value = _to_decimal(value)
+    decimal_step = _to_decimal(step)
+    if decimal_step <= 0:
+        return float(decimal_value)
+    rounded = (decimal_value / decimal_step).to_integral_value(rounding=rounding) * decimal_step
+    return float(rounded)
+
+
+def _to_decimal(value: str | Decimal) -> Decimal:
+    return value if isinstance(value, Decimal) else Decimal(str(value))
+
+
+def _format_decimal(value: Decimal) -> str:
+    return format(value.normalize(), "f")
 
 
 def main() -> None:
