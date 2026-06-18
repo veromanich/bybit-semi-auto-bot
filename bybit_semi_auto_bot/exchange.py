@@ -24,6 +24,8 @@ class PositionSnapshot:
     size: float
     avg_price: float
     unrealised_pnl: float
+    stop_loss: str = ""
+    take_profit: str = ""
 
 
 @dataclass(frozen=True)
@@ -46,6 +48,8 @@ class OpenOrder:
     trigger_price: str
     status: str
     created_time: str
+    stop_order_type: str = ""
+    reduce_only: bool = False
 
 
 @dataclass(frozen=True)
@@ -146,6 +150,8 @@ class BybitClient:
             size=_to_float(active.get("size")),
             avg_price=_to_float(active.get("avgPrice")),
             unrealised_pnl=_to_float(active.get("unrealisedPnl")),
+            stop_loss=str(active.get("stopLoss", "")),
+            take_profit=str(active.get("takeProfit", "")),
         )
 
     def get_open_orders(self, symbol: str) -> list[OpenOrder]:
@@ -153,20 +159,33 @@ class BybitClient:
             return []
         response = self.session.get_open_orders(category=self.settings.category, symbol=symbol)
         rows = response.get("result", {}).get("list", [])
+        return [_open_order_from_row(item) for item in rows]
+
+    def get_all_positions(self) -> list[PositionSnapshot]:
+        if not self._has_credentials:
+            return []
+        response = self.session.get_positions(category=self.settings.category, settleCoin="USDT")
+        rows = response.get("result", {}).get("list", [])
         return [
-            OpenOrder(
-                order_id=str(item.get("orderId", "")),
+            PositionSnapshot(
                 symbol=str(item.get("symbol", "")),
                 side=str(item.get("side", "")),
-                order_type=str(item.get("orderType", "")),
-                price=str(item.get("price", "")),
-                qty=str(item.get("qty", "")),
-                trigger_price=str(item.get("triggerPrice", "")),
-                status=str(item.get("orderStatus", "")),
-                created_time=str(item.get("createdTime", "")),
+                size=_to_float(item.get("size")),
+                avg_price=_to_float(item.get("avgPrice")),
+                unrealised_pnl=_to_float(item.get("unrealisedPnl")),
+                stop_loss=str(item.get("stopLoss", "")),
+                take_profit=str(item.get("takeProfit", "")),
             )
             for item in rows
+            if _to_float(item.get("size", "0")) > 0
         ]
+
+    def get_all_open_orders(self) -> list[OpenOrder]:
+        if not self._has_credentials:
+            return []
+        response = self.session.get_open_orders(category=self.settings.category, settleCoin="USDT")
+        rows = response.get("result", {}).get("list", [])
+        return [_open_order_from_row(item) for item in rows]
 
     def cancel_order(self, symbol: str, order_id: str) -> dict[str, Any]:
         return self.session.cancel_order(
@@ -174,6 +193,28 @@ class BybitClient:
             symbol=symbol,
             orderId=order_id,
         )
+
+    def set_position_stop_loss(self, symbol: str, stop_loss: float | None) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "category": self.settings.category,
+            "symbol": symbol,
+            "tpslMode": "Full",
+            "positionIdx": 0,
+            "stopLoss": "0" if stop_loss is None else _format_decimal(stop_loss),
+            "slTriggerBy": "LastPrice",
+        }
+        return self.session.set_trading_stop(**payload)
+
+    def set_position_take_profit(self, symbol: str, take_profit: float | None) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "category": self.settings.category,
+            "symbol": symbol,
+            "tpslMode": "Full",
+            "positionIdx": 0,
+            "takeProfit": "0" if take_profit is None else _format_decimal(take_profit),
+            "tpTriggerBy": "LastPrice",
+        }
+        return self.session.set_trading_stop(**payload)
 
     def place_market_order(
         self,
@@ -274,6 +315,22 @@ def _optional_float(value: Any) -> float | None:
     if value in {None, ""}:
         return None
     return float(value)
+
+
+def _open_order_from_row(item: dict[str, Any]) -> OpenOrder:
+    return OpenOrder(
+        order_id=str(item.get("orderId", "")),
+        symbol=str(item.get("symbol", "")),
+        side=str(item.get("side", "")),
+        order_type=str(item.get("orderType", "")),
+        price=str(item.get("price", "")),
+        qty=str(item.get("qty", "")),
+        trigger_price=str(item.get("triggerPrice", "")),
+        status=str(item.get("orderStatus", "")),
+        created_time=str(item.get("createdTime", "")),
+        stop_order_type=str(item.get("stopOrderType", "")),
+        reduce_only=bool(item.get("reduceOnly", False)),
+    )
 
 
 def _format_decimal(value: float) -> str:

@@ -13,9 +13,18 @@ try:
 except ModuleNotFoundError as exc:  # pragma: no cover - shown only before dependencies are installed.
     raise SystemExit("Установите зависимости: pip install -r requirements.txt") from exc
 
-from .config import Settings, load_settings
+from .config import Settings, load_settings, save_env_values
 from .exchange import BybitClient, InstrumentRules, MarketSnapshot, OpenOrder, OrderRequest, PositionSnapshot
-from .risk import PositionSize, RiskPrices, calculate_position_size, calculate_risk_prices, format_price
+from .risk import (
+    AtrSnapshot,
+    PositionSize,
+    RiskPrices,
+    atr_stop_percent,
+    calculate_position_size,
+    calculate_risk_prices,
+    calculate_simple_atr,
+    format_price,
+)
 from .strategy import Signal, ema_signal
 
 
@@ -38,6 +47,38 @@ TRIGGER_BY_API = {
     "Цена маркировки": "MarkPrice",
     "Индексная цена": "IndexPrice",
 }
+TRADE_MODELS = (
+    "Отбой от уровня",
+    "Пробой уровня",
+    "Ложный пробой 1 бар",
+    "Ложный пробой 2 бара",
+    "Сложный ложный пробой",
+    "БСУ-БПУ",
+    "Другое",
+)
+REQUIRED_CHECKLIST_ITEMS = (
+    "Уровень отмечен на дневке/неделе/месяце и подтвержден справа",
+    "Сценарий входа соответствует выбранной стороне и типу заявки",
+    "SL и TP выставлены, риск/прибыль не хуже 1:3 или осознанно принят другой риск",
+    "Риск сделки вписывается в дневной лимит, нет запрета после серии убытков",
+)
+OPTIONAL_CHECKLIST_ITEMS = (
+    "ATR не исчерпан: цена не прошла 75-80% дневного ATR против идеи",
+    "Понятно, откуда пришла энергия: консолидация, поджатие, ретест или импульс",
+    "Есть запас хода до следующего сильного уровня",
+    "Подход к уровню прочитан: маленькие/большие бары, V/U, ближний/дальний ретест",
+)
+STOP_MODES = (
+    "Ручной %",
+    "ATR по тренду 10%",
+    "ATR по тренду 15%",
+    "ATR против тренда 5%",
+)
+STOP_MODE_ATR_PERCENT = {
+    "ATR по тренду 10%": 10.0,
+    "ATR по тренду 15%": 15.0,
+    "ATR против тренда 5%": 5.0,
+}
 
 
 class TradingApp(ctk.CTk):
@@ -47,8 +88,8 @@ class TradingApp(ctk.CTk):
         super().__init__()
 
         self.title("Bybit полуавтоматический бот")
-        self.geometry("1180x820+20+20")
-        self.minsize(1040, 740)
+        self.geometry("1280x840+20+20")
+        self.minsize(1120, 760)
 
         self.settings = settings
         self.client = BybitClient(settings)
@@ -58,6 +99,9 @@ class TradingApp(ctk.CTk):
         self.wallet_balance: float | None = None
         self.instrument_rules: InstrumentRules | None = None
         self.open_orders: list[OpenOrder] = []
+        self.all_open_orders: list[OpenOrder] = []
+        self.all_positions: list[PositionSnapshot] = []
+        self.daily_atr: AtrSnapshot | None = None
 
         self.symbol_var = tk.StringVar(value=settings.symbol)
         self.mode_var = tk.StringVar(value=_mode_label(settings.trading_mode))
@@ -72,12 +116,14 @@ class TradingApp(ctk.CTk):
         self.trigger_by_var = tk.StringVar(value="Последняя цена")
 
         self.auto_qty_var = tk.BooleanVar(value=False)
-        self.risk_percent_var = tk.StringVar(value="1")
+        self.risk_percent_var = tk.StringVar(value="0.5")
+        self.daily_risk_limit_var = tk.StringVar(value="1.5")
         self.leverage_var = tk.StringVar(value="1")
         self.margin_mode_var = tk.StringVar(value="Кросс")
         self.apply_settings_before_order_var = tk.BooleanVar(value=False)
 
         self.auto_risk_var = tk.BooleanVar(value=False)
+        self.stop_mode_var = tk.StringVar(value="Ручной %")
         self.stop_percent_var = tk.StringVar(value="1")
         self.risk_mode_var = tk.StringVar(value="Риск/прибыль")
         self.reward_risk_var = tk.StringVar(value="3")
@@ -88,6 +134,7 @@ class TradingApp(ctk.CTk):
         self.status_var = tk.StringVar(value="Готово")
         self.market_var = tk.StringVar(value="-")
         self.balance_var = tk.StringVar(value="-")
+        self.atr_var = tk.StringVar(value="Дневной ATR: не загружен")
         self.position_var = tk.StringVar(value="Нет открытой позиции")
         self.signal_var = tk.StringVar(value="Сигнал не загружен")
         self.rules_var = tk.StringVar(value="Правила инструмента: не загружены")
@@ -97,6 +144,7 @@ class TradingApp(ctk.CTk):
         self.error_log: list[tuple[str, str]] = []
 
         self.order_fields_frame: ctk.CTkFrame | None = None
+        self.positions_frame: ctk.CTkScrollableFrame | None = None
         self.orders_frame: ctk.CTkScrollableFrame | None = None
         self.errors_box: ctk.CTkTextbox | None = None
         self.buy_side_button: ctk.CTkButton | None = None
@@ -105,6 +153,7 @@ class TradingApp(ctk.CTk):
         self.demo_test_button: ctk.CTkButton | None = None
         self.reward_risk_widgets: tuple[ctk.CTkLabel, ctk.CTkBaseClass] | None = None
         self.take_profit_percent_widgets: tuple[ctk.CTkLabel, ctk.CTkBaseClass] | None = None
+        self.stop_percent_widgets: tuple[ctk.CTkLabel, ctk.CTkBaseClass] | None = None
 
         self._build_ui()
         self.refresh_all()
@@ -127,37 +176,32 @@ class TradingApp(ctk.CTk):
         ctk.CTkOptionMenu(top, variable=self.mode_var, values=["Демо", "Реальный"], command=lambda _v: self.change_trading_mode()).grid(
             row=0, column=4, padx=(0, 12), pady=10
         )
-        ctk.CTkButton(top, text="Обновить", width=110, command=self.refresh_all).grid(row=0, column=5, padx=(0, 12), pady=10)
+        ctk.CTkButton(top, text="API", width=70, fg_color="#303136", hover_color="#3b3c42", command=self.open_api_settings_dialog).grid(
+            row=0, column=5, padx=(0, 8), pady=10
+        )
+        self.demo_test_button = ctk.CTkButton(
+            top,
+            text="Тест demo API",
+            width=130,
+            fg_color="#303136",
+            hover_color="#3b3c42",
+            command=self.confirm_demo_api_test,
+        )
+        self.demo_test_button.grid(row=0, column=6, padx=(0, 8), pady=10)
+        ctk.CTkButton(top, text="Обновить", width=110, command=self.refresh_all).grid(row=0, column=7, padx=(0, 12), pady=10)
 
         body = ctk.CTkFrame(self, fg_color="transparent")
         body.grid(row=1, column=0, sticky="nsew", padx=14, pady=(0, 14))
-        body.grid_columnconfigure(0, weight=0, minsize=300)
+        body.grid_columnconfigure(0, weight=0, minsize=390)
         body.grid_columnconfigure(1, weight=1)
         body.grid_rowconfigure(0, weight=1)
 
-        left = ctk.CTkFrame(body, fg_color="#111217", corner_radius=10, width=300)
+        left = ctk.CTkFrame(body, fg_color="#111217", corner_radius=10, width=390)
         left.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
         left.grid_propagate(False)
         left.grid_columnconfigure(0, weight=1)
-        left.grid_rowconfigure(7, weight=1)
-
-        ctk.CTkLabel(left, text="Рынок", font=ctk.CTkFont(size=18, weight="bold")).grid(row=0, column=0, sticky="w", padx=16, pady=(14, 6))
-        ctk.CTkLabel(left, textvariable=self.market_var, font=ctk.CTkFont(size=16)).grid(row=1, column=0, sticky="w", padx=16)
-        ctk.CTkLabel(left, textvariable=self.balance_var, text_color="#a5a8b0").grid(row=2, column=0, sticky="w", padx=16, pady=(8, 0))
-        ctk.CTkLabel(left, textvariable=self.rules_var, text_color="#a5a8b0", wraplength=260, justify="left").grid(
-            row=3, column=0, sticky="w", padx=16, pady=(8, 0)
-        )
-        ctk.CTkLabel(left, text="EMA сигнал", font=ctk.CTkFont(size=14, weight="bold")).grid(row=4, column=0, sticky="w", padx=16, pady=(18, 4))
-        ctk.CTkLabel(left, textvariable=self.signal_var, justify="left", wraplength=260).grid(row=5, column=0, sticky="w", padx=16)
-        ctk.CTkLabel(left, text="Позиция", font=ctk.CTkFont(size=14, weight="bold")).grid(row=6, column=0, sticky="w", padx=16, pady=(18, 4))
-        ctk.CTkLabel(left, textvariable=self.position_var, justify="left", wraplength=260).grid(row=7, column=0, sticky="nw", padx=16)
-
-        ctk.CTkLabel(left, text="Открытые заявки", font=ctk.CTkFont(size=14, weight="bold")).grid(
-            row=8, column=0, sticky="w", padx=16, pady=(18, 6)
-        )
-        self.orders_frame = ctk.CTkScrollableFrame(left, fg_color="#171920", height=160)
-        self.orders_frame.grid(row=9, column=0, sticky="ew", padx=16, pady=(0, 16))
-        self.orders_frame.grid_columnconfigure(0, weight=1)
+        left.grid_rowconfigure(0, weight=1)
+        self._build_account_tabs(left)
 
         right = ctk.CTkFrame(body, fg_color="#14161c", corner_radius=10)
         right.grid(row=0, column=1, sticky="nsew")
@@ -171,6 +215,58 @@ class TradingApp(ctk.CTk):
         bottom.grid_columnconfigure(0, weight=1)
         ctk.CTkLabel(bottom, textvariable=self.status_var, anchor="w").grid(row=0, column=0, sticky="ew", padx=12, pady=8)
         ctk.CTkLabel(bottom, textvariable=self.error_count_var, text_color="#a5a8b0").grid(row=0, column=1, padx=12, pady=8)
+
+    def _build_account_tabs(self, parent: ctk.CTkFrame) -> None:
+        tabs = ctk.CTkTabview(parent, fg_color="#111217", segmented_button_fg_color="#20232b")
+        tabs.grid(row=0, column=0, sticky="nsew", padx=8, pady=8)
+        tabs.add("Рынок")
+        tabs.add("Позиции")
+        tabs.add("Заявки")
+
+        market_tab = tabs.tab("Рынок")
+        market_tab.grid_columnconfigure(0, weight=1)
+        market_tab.grid_rowconfigure(8, weight=1)
+        ctk.CTkLabel(market_tab, text="Рынок", font=ctk.CTkFont(size=18, weight="bold")).grid(
+            row=0, column=0, sticky="w", padx=10, pady=(12, 6)
+        )
+        ctk.CTkLabel(market_tab, textvariable=self.market_var, font=ctk.CTkFont(size=16), justify="left", wraplength=330).grid(
+            row=1, column=0, sticky="w", padx=10
+        )
+        ctk.CTkLabel(market_tab, textvariable=self.balance_var, text_color="#a5a8b0", justify="left", wraplength=330).grid(
+            row=2, column=0, sticky="w", padx=10, pady=(8, 0)
+        )
+        ctk.CTkLabel(market_tab, textvariable=self.atr_var, text_color="#a5a8b0", justify="left", wraplength=330).grid(
+            row=3, column=0, sticky="w", padx=10, pady=(8, 0)
+        )
+        ctk.CTkLabel(market_tab, textvariable=self.rules_var, text_color="#a5a8b0", wraplength=330, justify="left").grid(
+            row=4, column=0, sticky="w", padx=10, pady=(8, 0)
+        )
+        ctk.CTkLabel(market_tab, text="EMA сигнал", font=ctk.CTkFont(size=14, weight="bold")).grid(
+            row=5, column=0, sticky="w", padx=10, pady=(18, 4)
+        )
+        ctk.CTkLabel(market_tab, textvariable=self.signal_var, justify="left", wraplength=330).grid(
+            row=6, column=0, sticky="w", padx=10
+        )
+        ctk.CTkLabel(market_tab, text="Текущий символ", font=ctk.CTkFont(size=14, weight="bold")).grid(
+            row=7, column=0, sticky="w", padx=10, pady=(18, 4)
+        )
+        ctk.CTkLabel(market_tab, textvariable=self.position_var, justify="left", wraplength=330).grid(
+            row=8, column=0, sticky="nw", padx=10
+        )
+
+        positions_tab = tabs.tab("Позиции")
+        positions_tab.grid_columnconfigure(0, weight=1)
+        positions_tab.grid_rowconfigure(0, weight=1)
+        self.positions_frame = ctk.CTkScrollableFrame(positions_tab, fg_color="#171920")
+        self.positions_frame.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        self.positions_frame.grid_columnconfigure(0, weight=1)
+
+        orders_tab = tabs.tab("Заявки")
+        orders_tab.grid_columnconfigure(0, weight=1)
+        orders_tab.grid_rowconfigure(0, weight=1)
+        self.orders_frame = ctk.CTkScrollableFrame(orders_tab, fg_color="#171920")
+        self.orders_frame.grid(row=0, column=0, sticky="nsew", padx=6, pady=6)
+        self.orders_frame.grid_columnconfigure(0, weight=1)
 
     def _build_ticket(self, parent: ctk.CTkFrame) -> None:
         ctk.CTkLabel(parent, text="Заявка", font=ctk.CTkFont(size=18, weight="bold")).grid(
@@ -247,21 +343,29 @@ class TradingApp(ctk.CTk):
         ctk.CTkCheckBox(frame, text="Авто SL/TP", variable=self.auto_risk_var).grid(
             row=1, column=2, columnspan=2, sticky="w", padx=10, pady=(10, 6)
         )
-        self._field(frame, "Риск, % баланса", ctk.CTkEntry(frame, textvariable=self.risk_percent_var), 2)
-        self._field(frame, "Стоп, %", ctk.CTkEntry(frame, textvariable=self.stop_percent_var), 2, pair=1)
+        self._field(frame, "Риск сделки, %", ctk.CTkEntry(frame, textvariable=self.risk_percent_var), 2)
+        self._field(frame, "Дневной лимит, %", ctk.CTkEntry(frame, textvariable=self.daily_risk_limit_var), 2, pair=1)
+        self._field(
+            frame,
+            "Стоп",
+            ctk.CTkOptionMenu(frame, variable=self.stop_mode_var, values=list(STOP_MODES), command=lambda _value: self._sync_stop_mode_fields()),
+            3,
+        )
+        self.stop_percent_widgets = self._field(frame, "Стоп, %", ctk.CTkEntry(frame, textvariable=self.stop_percent_var), 3, pair=1)
         self._field(
             frame,
             "Цель",
             ctk.CTkOptionMenu(frame, variable=self.risk_mode_var, values=["Риск/прибыль", "Процент профита"], command=lambda _value: self._sync_risk_target_fields()),
-            3,
+            4,
         )
-        self.reward_risk_widgets = self._field(frame, "RR", ctk.CTkEntry(frame, textvariable=self.reward_risk_var), 3, pair=1)
-        self.take_profit_percent_widgets = self._field(frame, "Профит, %", ctk.CTkEntry(frame, textvariable=self.take_profit_percent_var), 3, pair=1)
+        self.reward_risk_widgets = self._field(frame, "RR", ctk.CTkEntry(frame, textvariable=self.reward_risk_var), 4, pair=1)
+        self.take_profit_percent_widgets = self._field(frame, "Профит, %", ctk.CTkEntry(frame, textvariable=self.take_profit_percent_var), 4, pair=1)
         self.calculate_risk_button = ctk.CTkButton(frame, text="Рассчитать SL/TP для покупки", command=self.calculate_selected_order)
         self.calculate_risk_button.grid(
-            row=4, column=0, columnspan=4, sticky="ew", padx=10, pady=(14, 10)
+            row=5, column=0, columnspan=4, sticky="ew", padx=10, pady=(14, 10)
         )
         self._sync_risk_target_fields()
+        self._sync_stop_mode_fields()
 
     def _build_exit_section(self, parent: ctk.CTkFrame, row: int) -> None:
         frame = self._section(parent, "Уровни выхода", row)
@@ -281,14 +385,6 @@ class TradingApp(ctk.CTk):
         ctk.CTkButton(frame, text="Применить маржу/плечо", command=self.confirm_apply_trade_settings).grid(
             row=3, column=0, columnspan=4, sticky="ew", padx=10, pady=(12, 10)
         )
-        self.demo_test_button = ctk.CTkButton(
-            frame,
-            text="Тест demo API",
-            fg_color="#303136",
-            hover_color="#3b3c42",
-            command=self.confirm_demo_api_test,
-        )
-        self.demo_test_button.grid(row=4, column=0, columnspan=4, sticky="ew", padx=10, pady=(0, 10))
         self._sync_mode_controls()
 
     def _build_errors_tab(self, frame: ctk.CTkFrame) -> None:
@@ -375,6 +471,16 @@ class TradingApp(ctk.CTk):
                 else:
                     widget.grid_remove()
 
+    def _sync_stop_mode_fields(self) -> None:
+        if self.stop_percent_widgets is None:
+            return
+        show_manual_stop = self.stop_mode_var.get() == "Ручной %"
+        for widget in self.stop_percent_widgets:
+            if show_manual_stop:
+                widget.grid()
+            else:
+                widget.grid_remove()
+
     def _sync_mode_controls(self) -> None:
         if self.demo_test_button is None:
             return
@@ -387,36 +493,65 @@ class TradingApp(ctk.CTk):
         symbol = self.symbol_var.get().strip().upper()
         self.symbol_var.set(symbol)
 
-        def work() -> tuple[MarketSnapshot, InstrumentRules, Signal | None, PositionSnapshot | None, float | None, list[OpenOrder]]:
+        def work() -> tuple[
+            MarketSnapshot,
+            InstrumentRules,
+            Signal | None,
+            PositionSnapshot | None,
+            float | None,
+            list[OpenOrder],
+            AtrSnapshot | None,
+            list[PositionSnapshot],
+            list[OpenOrder],
+        ]:
             market = self.client.get_market_snapshot(symbol)
             rules = self.client.get_instrument_rules(symbol)
             candles = self.client.get_klines(symbol, self.settings.interval)
+            daily_candles = self.client.get_klines(symbol, "D", limit=30)
             signal = ema_signal(candles)
             position = self.client.get_position(symbol)
             balance = self.client.get_wallet_balance()
             orders = self.client.get_open_orders(symbol)
-            return market, rules, signal, position, balance, orders
+            all_positions = self.client.get_all_positions()
+            all_orders = self.client.get_all_open_orders()
+            atr = calculate_simple_atr(daily_candles, bars=5, interval="D")
+            return market, rules, signal, position, balance, orders, atr, all_positions, all_orders
 
         self._run_background("Обновляю данные...", work, self._apply_refresh_result)
 
     def _apply_refresh_result(
         self,
-        result: tuple[MarketSnapshot, InstrumentRules, Signal | None, PositionSnapshot | None, float | None, list[OpenOrder]],
+        result: tuple[
+            MarketSnapshot,
+            InstrumentRules,
+            Signal | None,
+            PositionSnapshot | None,
+            float | None,
+            list[OpenOrder],
+            AtrSnapshot | None,
+            list[PositionSnapshot],
+            list[OpenOrder],
+        ],
     ) -> None:
-        market, rules, signal, position, balance, orders = result
+        market, rules, signal, position, balance, orders, atr, all_positions, all_orders = result
         self.market = market
         self.instrument_rules = rules
         self.signal = signal
         self.position = position
         self.wallet_balance = balance
         self.open_orders = orders
+        self.daily_atr = atr
+        self.all_positions = all_positions
+        self.all_open_orders = all_orders
 
         mark = f", mark {market.mark_price:.2f}" if market.mark_price else ""
         self.market_var.set(f"{market.symbol}: last {market.last_price:.2f}{mark} | {_mode_label(self.settings.trading_mode)}")
         self.signal_var.set(f"{signal.label}\nFast EMA: {signal.fast_ema:.2f} | Slow EMA: {signal.slow_ema:.2f}" if signal else "Нет сигнала")
         self.position_var.set(_format_position(position))
         self.balance_var.set(f"USDT баланс: {balance:.2f}" if balance is not None else "USDT баланс: нужны API ключи")
+        self.atr_var.set(_format_atr(atr))
         self.rules_var.set(_format_rules(rules))
+        self._render_positions()
         self._render_open_orders()
         self.status_var.set("Готово")
 
@@ -426,23 +561,65 @@ class TradingApp(ctk.CTk):
         for child in self.orders_frame.winfo_children():
             child.destroy()
 
-        if not self.open_orders:
+        orders = self.all_open_orders or self.open_orders
+        if not orders:
             ctk.CTkLabel(self.orders_frame, text="Открытых заявок нет", text_color="#a5a8b0").grid(row=0, column=0, sticky="w", padx=8, pady=8)
             return
 
-        for row, order in enumerate(self.open_orders):
+        for row, order in enumerate(orders):
             item = ctk.CTkFrame(self.orders_frame, fg_color="#20232b")
             item.grid(row=row, column=0, sticky="ew", padx=4, pady=4)
             item.grid_columnconfigure(0, weight=1)
-            trigger = f" | стоп {order.trigger_price}" if order.trigger_price else ""
-            text = f"{order.side} {order.qty} {order.symbol} {order.order_type} @ {order.price or '-'}{trigger} | {order.status}"
-            ctk.CTkLabel(item, text=text, anchor="w", justify="left").grid(row=0, column=0, sticky="ew", padx=8, pady=8)
-            ctk.CTkButton(item, text="Отменить", width=90, fg_color="#303136", hover_color="#3b3c42", command=lambda selected=order: self.confirm_cancel_order(selected)).grid(
+            ctk.CTkLabel(item, text=_format_order(order), anchor="w", justify="left", wraplength=250).grid(
+                row=0, column=0, sticky="ew", padx=8, pady=8
+            )
+            protection_kind = _protection_kind_from_order(order)
+            if protection_kind:
+                button_text = "Убрать SL" if protection_kind == "stop_loss" else "Убрать TP"
+                command = lambda selected=order: self.confirm_clear_order_protection(selected)
+            else:
+                button_text = "Отменить"
+                command = lambda selected=order: self.confirm_cancel_order(selected)
+            ctk.CTkButton(item, text=button_text, width=96, fg_color="#303136", hover_color="#3b3c42", command=command).grid(
                 row=0, column=1, padx=8, pady=8
             )
 
+    def _render_positions(self) -> None:
+        if self.positions_frame is None:
+            return
+        for child in self.positions_frame.winfo_children():
+            child.destroy()
+
+        if not self.all_positions:
+            ctk.CTkLabel(self.positions_frame, text="Открытых позиций нет", text_color="#a5a8b0").grid(
+                row=0, column=0, sticky="w", padx=8, pady=8
+            )
+            return
+
+        for row, position in enumerate(self.all_positions):
+            item = ctk.CTkFrame(self.positions_frame, fg_color="#20232b")
+            item.grid(row=row, column=0, sticky="ew", padx=4, pady=4)
+            item.grid_columnconfigure(0, weight=1)
+            ctk.CTkLabel(item, text=_format_position_card(position), anchor="w", justify="left", wraplength=250).grid(
+                row=0, column=0, sticky="ew", padx=8, pady=8
+            )
+            buttons = ctk.CTkFrame(item, fg_color="transparent")
+            buttons.grid(row=0, column=1, padx=8, pady=8)
+            ctk.CTkButton(buttons, text="Выбрать", width=82, fg_color="#303136", hover_color="#3b3c42", command=lambda selected=position: self._select_position_symbol(selected)).grid(
+                row=0, column=0, padx=(0, 4), pady=(0, 6)
+            )
+            ctk.CTkButton(buttons, text="Закрыть", width=82, fg_color="#d24b4b", hover_color="#e05d5d", command=lambda selected=position: self.confirm_close_specific_position(selected)).grid(
+                row=0, column=1, padx=(4, 0), pady=(0, 6)
+            )
+            ctk.CTkButton(buttons, text="SL", width=82, fg_color="#303136", hover_color="#3b3c42", command=lambda selected=position: self.open_position_protection_editor(selected, "stop_loss")).grid(
+                row=1, column=0, padx=(0, 4)
+            )
+            ctk.CTkButton(buttons, text="TP", width=82, fg_color="#303136", hover_color="#3b3c42", command=lambda selected=position: self.open_position_protection_editor(selected, "take_profit")).grid(
+                row=1, column=1, padx=(4, 0)
+            )
+
     def confirm_cancel_order(self, order: OpenOrder) -> None:
-        confirmed = messagebox.askyesno("Отменить заявку", f"Отменить заявку?\n\n{order.symbol}\nID: {order.order_id}")
+        confirmed = messagebox.askyesno("Отменить заявку", f"Отменить заявку?\n\n{_format_order(order)}\n\nID: {order.order_id}")
         if not confirmed:
             return
 
@@ -453,6 +630,91 @@ class TradingApp(ctk.CTk):
 
     def _cancel_done(self, order: OpenOrder) -> None:
         self.status_var.set(f"Заявка отменена: {order.order_id}")
+        self.refresh_all()
+
+    def confirm_clear_order_protection(self, order: OpenOrder) -> None:
+        protection_kind = _protection_kind_from_order(order)
+        if not protection_kind:
+            self.confirm_cancel_order(order)
+            return
+
+        label = _protection_label(protection_kind)
+        confirmed = messagebox.askyesno(
+            "Убрать защитный уровень",
+            f"Убрать только {label.lower()} для {order.symbol}?\n\nВторой защитный уровень останется без изменений.",
+        )
+        if not confirmed:
+            return
+
+        self._set_position_protection(order.symbol, protection_kind, None, f"{label} убран")
+
+    def open_position_protection_editor(self, position: PositionSnapshot, protection_kind: str) -> None:
+        label = _protection_label(protection_kind)
+        current_value = position.stop_loss if protection_kind == "stop_loss" else position.take_profit
+        initial_value = "" if _value_or_dash(current_value) == "-" else str(current_value)
+
+        dialog = ctk.CTkToplevel(self)
+        dialog.title(f"{label} {position.symbol}")
+        dialog.geometry("420x230")
+        dialog.minsize(380, 220)
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.grid_columnconfigure(0, weight=1)
+
+        value_var = tk.StringVar(value=initial_value)
+        ctk.CTkLabel(dialog, text=f"{label} для {position.symbol}", font=ctk.CTkFont(size=18, weight="bold")).grid(
+            row=0, column=0, sticky="w", padx=16, pady=(16, 4)
+        )
+        ctk.CTkLabel(dialog, text="Меняется только выбранный уровень. Второй SL/TP не трогаем.", text_color="#a5a8b0", wraplength=360, justify="left").grid(
+            row=1, column=0, sticky="w", padx=16, pady=(0, 12)
+        )
+        entry = ctk.CTkEntry(dialog, textvariable=value_var)
+        entry.grid(row=2, column=0, sticky="ew", padx=16, pady=(0, 12))
+
+        buttons = ctk.CTkFrame(dialog, fg_color="transparent")
+        buttons.grid(row=3, column=0, sticky="ew", padx=16, pady=(4, 16))
+        buttons.grid_columnconfigure((0, 1, 2), weight=1)
+
+        def save() -> None:
+            value = _parse_float(value_var.get(), label)
+            if value is None:
+                return
+            dialog.destroy()
+            self._set_position_protection(position.symbol, protection_kind, value, f"{label} обновлён")
+
+        def clear() -> None:
+            if _value_or_dash(current_value) == "-":
+                messagebox.showinfo("Уровень не выставлен", f"{label} для {position.symbol} сейчас не выставлен.", parent=dialog)
+                return
+            confirmed = messagebox.askyesno(
+                "Убрать защитный уровень",
+                f"Убрать только {label.lower()} для {position.symbol}?\n\nВторой защитный уровень останется без изменений.",
+                parent=dialog,
+            )
+            if not confirmed:
+                return
+            dialog.destroy()
+            self._set_position_protection(position.symbol, protection_kind, None, f"{label} убран")
+
+        ctk.CTkButton(buttons, text="Сохранить", command=save).grid(row=0, column=0, sticky="ew", padx=(0, 6))
+        ctk.CTkButton(buttons, text="Убрать", fg_color="#303136", hover_color="#3b3c42", command=clear).grid(row=0, column=1, sticky="ew", padx=6)
+        ctk.CTkButton(buttons, text="Отмена", fg_color="#303136", hover_color="#3b3c42", command=dialog.destroy).grid(row=0, column=2, sticky="ew", padx=(6, 0))
+        dialog.after(100, entry.focus_set)
+
+    def _set_position_protection(self, symbol: str, protection_kind: str, value: float | None, done_message: str) -> None:
+        def work() -> dict:
+            if protection_kind == "stop_loss":
+                return self.client.set_position_stop_loss(symbol, value)
+            return self.client.set_position_take_profit(symbol, value)
+
+        self._run_background("Обновляю защитный уровень...", work, lambda _result: self._protection_done(symbol, done_message))
+
+    def _protection_done(self, symbol: str, message: str) -> None:
+        self.status_var.set(f"{symbol}: {message}")
+        self.refresh_all()
+
+    def _select_position_symbol(self, position: PositionSnapshot) -> None:
+        self.symbol_var.set(position.symbol)
         self.refresh_all()
 
     def change_trading_mode(self) -> None:
@@ -474,6 +736,100 @@ class TradingApp(ctk.CTk):
         self._sync_mode_controls()
         self.status_var.set(f"Режим: {_mode_label(new_mode)}")
         self.refresh_all()
+
+    def open_api_settings_dialog(self) -> None:
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("API настройки")
+        dialog.geometry("560x360")
+        dialog.minsize(500, 330)
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.grid_columnconfigure(0, weight=1)
+
+        api_key_var = tk.StringVar(value=self.settings.api_key)
+        api_secret_var = tk.StringVar(value=self.settings.api_secret)
+        mode_var = tk.StringVar(value=_mode_label(self.settings.trading_mode))
+        show_secret_var = tk.BooleanVar(value=False)
+
+        ctk.CTkLabel(dialog, text="API настройки Bybit", font=ctk.CTkFont(size=20, weight="bold")).grid(
+            row=0, column=0, sticky="w", padx=18, pady=(18, 4)
+        )
+        ctk.CTkLabel(
+            dialog,
+            text="Ключи сохраняются в .env рядом с программой. Не включайте разрешение на вывод средств.",
+            text_color="#a5a8b0",
+            justify="left",
+            wraplength=500,
+        ).grid(row=1, column=0, sticky="w", padx=18, pady=(0, 14))
+
+        form = ctk.CTkFrame(dialog, fg_color="#171920", corner_radius=8)
+        form.grid(row=2, column=0, sticky="ew", padx=18, pady=(0, 14))
+        form.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkLabel(form, text="Режим", text_color="#a5a8b0").grid(row=0, column=0, sticky="w", padx=12, pady=(14, 6))
+        ctk.CTkOptionMenu(form, variable=mode_var, values=["Демо", "Реальный"]).grid(row=0, column=1, sticky="ew", padx=12, pady=(14, 6))
+
+        ctk.CTkLabel(form, text="API key", text_color="#a5a8b0").grid(row=1, column=0, sticky="w", padx=12, pady=6)
+        ctk.CTkEntry(form, textvariable=api_key_var).grid(row=1, column=1, sticky="ew", padx=12, pady=6)
+
+        ctk.CTkLabel(form, text="API secret", text_color="#a5a8b0").grid(row=2, column=0, sticky="w", padx=12, pady=6)
+        secret_entry = ctk.CTkEntry(form, textvariable=api_secret_var, show="*")
+        secret_entry.grid(row=2, column=1, sticky="ew", padx=12, pady=6)
+
+        def toggle_secret() -> None:
+            secret_entry.configure(show="" if show_secret_var.get() else "*")
+
+        ctk.CTkCheckBox(form, text="Показать secret", variable=show_secret_var, command=toggle_secret).grid(
+            row=3, column=1, sticky="w", padx=12, pady=(4, 14)
+        )
+
+        buttons = ctk.CTkFrame(dialog, fg_color="transparent")
+        buttons.grid(row=3, column=0, sticky="ew", padx=18, pady=(0, 18))
+        buttons.grid_columnconfigure((0, 1), weight=1)
+
+        def save() -> None:
+            api_key = api_key_var.get().strip()
+            api_secret = api_secret_var.get().strip()
+            trading_mode = _mode_value(mode_var.get())
+            if not api_key or not api_secret:
+                messagebox.showerror("Нет API ключей", "Заполните API key и API secret.", parent=dialog)
+                return
+            if trading_mode == "live":
+                confirmed = messagebox.askyesno(
+                    "Реальный режим",
+                    "Сохранить режим реальной торговли?\n\nПроверьте, что это именно live API ключи Bybit.",
+                    parent=dialog,
+                )
+                if not confirmed:
+                    return
+
+            save_env_values(
+                {
+                    "BYBIT_API_KEY": api_key,
+                    "BYBIT_API_SECRET": api_secret,
+                    "BYBIT_TRADING_MODE": trading_mode,
+                    "BYBIT_CATEGORY": self.settings.category,
+                    "BOT_SYMBOL": self.symbol_var.get().strip().upper() or self.settings.symbol,
+                    "BOT_INTERVAL": self.settings.interval,
+                    "BOT_DEFAULT_QTY": str(self.settings.default_qty),
+                    "BOT_RECV_WINDOW": str(self.settings.recv_window),
+                }
+            )
+            self.settings = load_settings()
+            self.client = BybitClient(self.settings)
+            self.mode_var.set(_mode_label(self.settings.trading_mode))
+            self.symbol_var.set(self.settings.symbol)
+            self._clear_loaded_market_state()
+            self._sync_mode_controls()
+            self.status_var.set("API настройки сохранены")
+            dialog.destroy()
+            self.refresh_all()
+
+        ctk.CTkButton(buttons, text="Отмена", fg_color="#303136", hover_color="#3b3c42", command=dialog.destroy).grid(
+            row=0, column=0, sticky="ew", padx=(0, 8)
+        )
+        ctk.CTkButton(buttons, text="Сохранить", command=save).grid(row=0, column=1, sticky="ew")
+        dialog.after(100, dialog.focus_force)
 
     def calculate_selected_order(self) -> RiskPrices | None:
         return self.calculate_and_fill_order(self._selected_side())
@@ -536,6 +892,10 @@ class TradingApp(ctk.CTk):
 
         direction = "покупку" if side == "Buy" else "продажу"
         entry_line = f"\nРасчетный вход: {risk_prices.entry_price:.2f}" if risk_prices else ""
+        checklist_summary = self._run_trade_checklist(symbol, side, request)
+        if checklist_summary is None:
+            return
+
         confirmed = messagebox.askyesno(
             "Подтвердите заявку",
             f"Открыть {direction}: {self.order_kind_var.get()} ({_mode_label(self.settings.trading_mode)})?\n\n"
@@ -559,7 +919,130 @@ class TradingApp(ctk.CTk):
                 self._apply_trade_settings_api(symbol, margin_mode, leverage)
             return self.client.place_order(request)
 
+        self._log_error(f"Checklist: {checklist_summary}")
         self._run_background("Отправляю заявку...", work, lambda result: self._order_done(result, "Заявка отправлена"))
+
+    def _run_trade_checklist(self, symbol: str, side: OrderSide, request: OrderRequest) -> str | None:
+        dialog = ctk.CTkToplevel(self)
+        dialog.title("Чек-лист перед сделкой")
+        dialog.geometry("760x700")
+        dialog.minsize(680, 620)
+        dialog.transient(self)
+        dialog.grab_set()
+        dialog.grid_columnconfigure(0, weight=1)
+        dialog.grid_rowconfigure(2, weight=1)
+
+        result: dict[str, str | None] = {"summary": None}
+        model_var = tk.StringVar(value=TRADE_MODELS[0])
+        required_vars = [tk.BooleanVar(value=False) for _ in REQUIRED_CHECKLIST_ITEMS]
+        optional_vars = [tk.BooleanVar(value=False) for _ in OPTIONAL_CHECKLIST_ITEMS]
+        note_text: ctk.CTkTextbox | None = None
+
+        side_label = "Покупка" if side == "Buy" else "Продажа"
+        request_line = (
+            f"{side_label} {symbol} | {self.order_kind_var.get()} | qty {format_price(request.qty)} | "
+            f"SL {request.stop_loss or '-'} | TP {request.take_profit or '-'}"
+        )
+        ctk.CTkLabel(dialog, text="Чек-лист перед сделкой", font=ctk.CTkFont(size=20, weight="bold")).grid(
+            row=0, column=0, sticky="w", padx=18, pady=(16, 4)
+        )
+        ctk.CTkLabel(dialog, text=request_line, text_color="#a5a8b0", anchor="w").grid(
+            row=1, column=0, sticky="ew", padx=18, pady=(0, 10)
+        )
+
+        content = ctk.CTkScrollableFrame(dialog, fg_color="#14161c")
+        content.grid(row=2, column=0, sticky="nsew", padx=14, pady=(0, 10))
+        content.grid_columnconfigure(0, weight=1)
+
+        scenario = ctk.CTkFrame(content, fg_color="#171920", corner_radius=8)
+        scenario.grid(row=0, column=0, sticky="ew", padx=4, pady=(4, 8))
+        scenario.grid_columnconfigure(1, weight=1)
+        ctk.CTkLabel(scenario, text="Сценарий", text_color="#a5a8b0").grid(row=0, column=0, sticky="w", padx=10, pady=10)
+        ctk.CTkOptionMenu(scenario, variable=model_var, values=list(TRADE_MODELS)).grid(
+            row=0, column=1, sticky="ew", padx=(0, 10), pady=10
+        )
+
+        required_frame = ctk.CTkFrame(content, fg_color="#171920", corner_radius=8)
+        required_frame.grid(row=1, column=0, sticky="ew", padx=4, pady=8)
+        required_frame.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(required_frame, text="Обязательные пункты", font=ctk.CTkFont(size=14, weight="bold")).grid(
+            row=0, column=0, sticky="w", padx=10, pady=(10, 4)
+        )
+        for index, (label, variable) in enumerate(zip(REQUIRED_CHECKLIST_ITEMS, required_vars), start=1):
+            ctk.CTkCheckBox(required_frame, text=label, variable=variable).grid(
+                row=index, column=0, sticky="w", padx=10, pady=5
+            )
+
+        optional_frame = ctk.CTkFrame(content, fg_color="#171920", corner_radius=8)
+        optional_frame.grid(row=2, column=0, sticky="ew", padx=4, pady=8)
+        optional_frame.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(optional_frame, text="Дополнительный контекст", font=ctk.CTkFont(size=14, weight="bold")).grid(
+            row=0, column=0, sticky="w", padx=10, pady=(10, 4)
+        )
+        for index, (label, variable) in enumerate(zip(OPTIONAL_CHECKLIST_ITEMS, optional_vars), start=1):
+            ctk.CTkCheckBox(optional_frame, text=label, variable=variable).grid(
+                row=index, column=0, sticky="w", padx=10, pady=5
+            )
+
+        note_frame = ctk.CTkFrame(content, fg_color="#171920", corner_radius=8)
+        note_frame.grid(row=3, column=0, sticky="ew", padx=4, pady=8)
+        note_frame.grid_columnconfigure(0, weight=1)
+        ctk.CTkLabel(note_frame, text="Комментарий к сделке", font=ctk.CTkFont(size=14, weight="bold")).grid(
+            row=0, column=0, sticky="w", padx=10, pady=(10, 4)
+        )
+        note_text = ctk.CTkTextbox(note_frame, height=84, wrap="word")
+        note_text.grid(row=1, column=0, sticky="ew", padx=10, pady=(0, 10))
+
+        warning_var = tk.StringVar(value="Отметь обязательные пункты, чтобы продолжить.")
+        ctk.CTkLabel(dialog, textvariable=warning_var, text_color="#f0b35a", anchor="w").grid(
+            row=3, column=0, sticky="ew", padx=18, pady=(0, 8)
+        )
+
+        buttons = ctk.CTkFrame(dialog, fg_color="transparent")
+        buttons.grid(row=4, column=0, sticky="ew", padx=18, pady=(0, 16))
+        buttons.grid_columnconfigure(0, weight=1)
+
+        def accept() -> None:
+            missing_required = [
+                label for label, variable in zip(REQUIRED_CHECKLIST_ITEMS, required_vars) if not variable.get()
+            ]
+            if missing_required:
+                warning_var.set(f"Не отмечено обязательных пунктов: {len(missing_required)}")
+                return
+            missing_optional = [
+                label for label, variable in zip(OPTIONAL_CHECKLIST_ITEMS, optional_vars) if not variable.get()
+            ]
+            if missing_optional:
+                proceed = messagebox.askyesno(
+                    "Есть непроверенный контекст",
+                    "Не все дополнительные пункты отмечены.\n\nПродолжить осознанно?",
+                    parent=dialog,
+                )
+                if not proceed:
+                    return
+            note = note_text.get("1.0", "end").strip() if note_text is not None else ""
+            checked_optional = len(OPTIONAL_CHECKLIST_ITEMS) - len(missing_optional)
+            result["summary"] = (
+                f"{symbol} {side_label}; сценарий: {model_var.get()}; "
+                f"обязательные 4/4; контекст {checked_optional}/{len(OPTIONAL_CHECKLIST_ITEMS)}"
+                + (f"; комментарий: {note}" if note else "")
+            )
+            dialog.destroy()
+
+        def cancel() -> None:
+            result["summary"] = None
+            dialog.destroy()
+
+        ctk.CTkButton(buttons, text="Отмена", fg_color="#303136", hover_color="#3b3c42", command=cancel).grid(
+            row=0, column=0, sticky="ew", padx=(0, 8)
+        )
+        ctk.CTkButton(buttons, text="Продолжить к подтверждению", command=accept).grid(
+            row=0, column=1, sticky="ew"
+        )
+
+        dialog.protocol("WM_DELETE_WINDOW", cancel)
+        dialog.wait_window()
+        return result["summary"]
 
     def confirm_demo_api_test(self) -> None:
         if not self.settings.is_demo:
@@ -728,18 +1211,18 @@ class TradingApp(ctk.CTk):
         if not self.position:
             messagebox.showinfo("Нет позиции", "Нет открытой позиции для закрытия.")
             return
+        self.confirm_close_specific_position(self.position)
 
+    def confirm_close_specific_position(self, position: PositionSnapshot) -> None:
         confirmed = messagebox.askyesno(
             "Закрыть позицию",
-            f"Закрыть текущую позицию {self.position.side}?\n\nСимвол: {self.position.symbol}\nРазмер: {self.position.size}",
+            f"Закрыть позицию {position.side} по рынку?\n\nСимвол: {position.symbol}\nРазмер: {position.size}",
         )
         if not confirmed:
             return
 
         def work() -> dict:
-            if not self.position:
-                raise RuntimeError("Position disappeared before close request")
-            return self.client.close_position_market(self.position)
+            return self.client.close_position_market(position)
 
         self._run_background("Закрываю позицию...", work, lambda result: self._order_done(result, "Заявка на закрытие отправлена"))
 
@@ -813,7 +1296,7 @@ class TradingApp(ctk.CTk):
         if not self._has_fresh_market(symbol):
             raise ValueError(f"Обновите данные рынка для {symbol} перед расчетом SL/TP.")
 
-        stop_percent = _require_float(self.stop_percent_var.get(), "Стоп, %")
+        stop_percent = self._resolve_stop_percent()
         if self.risk_mode_var.get() == "Риск/прибыль":
             reward_risk = _require_float(self.reward_risk_var.get(), "RR")
             return calculate_risk_prices(side, self.market.last_price, stop_percent, reward_risk=reward_risk)
@@ -825,13 +1308,39 @@ class TradingApp(ctk.CTk):
         if self.wallet_balance is None:
             raise ValueError("Баланс не загружен. Добавьте API ключи и обновите данные.")
 
+        risk_percent = _require_float(self.risk_percent_var.get(), "Риск сделки, %")
+        daily_limit_percent = _require_float(self.daily_risk_limit_var.get(), "Дневной лимит, %")
+        if risk_percent > daily_limit_percent:
+            raise ValueError("Риск сделки больше дневного лимита.")
+        if risk_percent > 0.5:
+            proceed = messagebox.askyesno(
+                "Риск выше правила",
+                "По алгоритму риск на сделку 0.5% от депозита.\n\n"
+                f"Сейчас указано {risk_percent:g}%. Продолжить осознанно?",
+            )
+            if not proceed:
+                raise ValueError("Расчет отменен: риск сделки выше 0.5%.")
+
         return calculate_position_size(
             entry_price=prices.entry_price,
             stop_loss=prices.stop_loss,
             balance=self.wallet_balance,
-            risk_percent=_require_float(self.risk_percent_var.get(), "Риск, % баланса"),
+            risk_percent=risk_percent,
             leverage=_require_float(self.leverage_var.get(), "Плечо"),
         )
+
+    def _resolve_stop_percent(self) -> float:
+        stop_mode = self.stop_mode_var.get()
+        if stop_mode == "Ручной %":
+            return _require_float(self.stop_percent_var.get(), "Стоп, %")
+        if self.daily_atr is None:
+            raise ValueError("Дневной ATR не загружен. Обновите рынок перед расчетом SL/TP.")
+        if not self.market:
+            raise ValueError("Рыночная цена не загружена.")
+        atr_percent = STOP_MODE_ATR_PERCENT[stop_mode]
+        stop_percent = atr_stop_percent(self.market.last_price, self.daily_atr.value, atr_percent)
+        self.stop_percent_var.set(format_price(stop_percent))
+        return stop_percent
 
     def _resolve_trigger_direction(self, trigger_price: float) -> int:
         direction = self.trigger_direction_var.get()
@@ -911,12 +1420,17 @@ class TradingApp(ctk.CTk):
         self.position = None
         self.signal = None
         self.wallet_balance = None
+        self.daily_atr = None
         self.open_orders = []
+        self.all_positions = []
+        self.all_open_orders = []
         self.market_var.set("-")
         self.position_var.set("Нет открытой позиции")
         self.signal_var.set("Сигнал не загружен")
         self.balance_var.set("-")
+        self.atr_var.set("Дневной ATR: не загружен")
         self.rules_var.set("Правила инструмента: не загружены")
+        self._render_positions()
         self._render_open_orders()
 
     def _has_fresh_market(self, symbol: str) -> bool:
@@ -1011,12 +1525,78 @@ def _format_position(position: PositionSnapshot | None) -> str:
     if not position:
         return "Нет открытой позиции"
     side = "Покупка" if position.side == "Buy" else "Продажа"
-    return f"{side} {position.size:g} {position.symbol}\nСредняя: {position.avg_price:.2f} | Нереализ. PnL: {position.unrealised_pnl:.4f}"
+    return (
+        f"{side} {position.size:g} {position.symbol}\n"
+        f"Средняя: {position.avg_price:.2f} | PnL: {position.unrealised_pnl:.4f}\n"
+        f"SL: {_value_or_dash(position.stop_loss)} | TP: {_value_or_dash(position.take_profit)}"
+    )
+
+
+def _format_position_card(position: PositionSnapshot) -> str:
+    side = "Покупка" if position.side == "Buy" else "Продажа"
+    return (
+        f"{position.symbol} | {side} {position.size:g}\n"
+        f"Средняя: {position.avg_price:.2f} | PnL: {position.unrealised_pnl:.4f}\n"
+        f"Стоп-лосс: {_value_or_dash(position.stop_loss)}\n"
+        f"Тейк-профит: {_value_or_dash(position.take_profit)}"
+    )
+
+
+def _format_order(order: OpenOrder) -> str:
+    side = "Buy" if order.side == "Buy" else "Sell"
+    parts = [
+        f"{order.symbol} | {_order_kind_label(order)}",
+        f"{side} {order.qty}",
+    ]
+    if _value_or_dash(order.price) != "-":
+        parts.append(f"цена {order.price}")
+    if _value_or_dash(order.trigger_price) != "-":
+        parts.append(f"триггер {order.trigger_price}")
+    parts.append(order.status)
+    return "\n".join((parts[0], " | ".join(parts[1:])))
+
+
+def _order_kind_label(order: OpenOrder) -> str:
+    stop_type = order.stop_order_type.lower()
+    if "takeprofit" in stop_type:
+        return "Тейк-профит"
+    if "stoploss" in stop_type:
+        return "Стоп-лосс"
+    if order.reduce_only:
+        return "Закрывающая заявка"
+    if order.trigger_price:
+        return "Стоп-заявка" if order.order_type == "Market" else "Стоп-лимит"
+    return "Лимитная" if order.order_type == "Limit" else "Рыночная"
+
+
+def _protection_kind_from_order(order: OpenOrder) -> str | None:
+    stop_type = order.stop_order_type.lower()
+    if "takeprofit" in stop_type:
+        return "take_profit"
+    if "stoploss" in stop_type:
+        return "stop_loss"
+    return None
+
+
+def _protection_label(protection_kind: str) -> str:
+    return "Стоп-лосс" if protection_kind == "stop_loss" else "Тейк-профит"
+
+
+def _value_or_dash(value: str | float | None) -> str:
+    if value in {None, "", "0", 0, 0.0}:
+        return "-"
+    return str(value)
 
 
 def _format_rules(rules: InstrumentRules) -> str:
     min_notional = f" | мин. сумма {rules.min_notional_value} USDT" if rules.min_notional_value else ""
     return f"Мин. кол-во {rules.min_order_qty} | шаг {rules.qty_step} | тик {rules.tick_size}{min_notional}"
+
+
+def _format_atr(atr: AtrSnapshot | None) -> str:
+    if not atr:
+        return "Дневной ATR: не загружен"
+    return f"Дневной ATR({atr.bars_used}): {format_price(atr.value)}"
 
 
 def _parse_float(value: str, label: str) -> float | None:

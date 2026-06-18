@@ -17,7 +17,7 @@ Trading futures is risky. Test thoroughly on Bybit testnet or demo before using 
 
 ## Setup
 
-1. Install Python 3.11 or newer.
+1. Install Python 3.9 or newer.
 2. Create and activate a virtual environment:
 
 ```powershell
@@ -41,6 +41,31 @@ Copy-Item .env.example .env
 
 ```powershell
 python -m bybit_semi_auto_bot
+```
+
+## Windows EXE Build
+
+To send the bot to another Windows user without asking them to install Python or a code editor, build a standalone `.exe` with PyInstaller:
+
+```powershell
+.\build_windows.ps1
+```
+
+The build output will be:
+
+```text
+dist\BybitSemiAutoBot.exe
+dist\.env.example
+```
+
+Send both files to your friend. They should rename `.env.example` to `.env`, place it next to `BybitSemiAutoBot.exe`, and fill in their own Bybit API keys. Do not send your personal `.env`.
+
+They can also start the app and use the `API` button in the top bar. The app will create/update `.env` next to the `.exe` automatically.
+
+For debugging a packaged app with a visible console window:
+
+```powershell
+.\build_windows.ps1 -Console
 ```
 
 ## Trading Mode

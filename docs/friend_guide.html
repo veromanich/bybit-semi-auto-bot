@@ -1,0 +1,457 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <title>Инструкция по Bybit Semi-Auto Bot</title>
+  <style>
+    @page { size: A4; margin: 16mm; }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: "Segoe UI", Arial, sans-serif;
+      color: #16181d;
+      background: #ffffff;
+      line-height: 1.45;
+      font-size: 12.5px;
+    }
+    h1, h2, h3 { margin: 0 0 8px; line-height: 1.18; color: #0f172a; }
+    h1 { font-size: 29px; }
+    h2 { font-size: 20px; margin-top: 26px; padding-top: 10px; border-top: 2px solid #e5e7eb; }
+    h3 { font-size: 15px; margin-top: 14px; }
+    p { margin: 0 0 8px; }
+    ul, ol { margin: 6px 0 12px 20px; padding: 0; }
+    li { margin: 3px 0; }
+    code {
+      font-family: Consolas, "Courier New", monospace;
+      background: #f1f5f9;
+      padding: 1px 4px;
+      border-radius: 4px;
+      font-size: 11.5px;
+    }
+    .cover {
+      min-height: 250px;
+      border-radius: 14px;
+      padding: 28px;
+      color: white;
+      background: linear-gradient(135deg, #172554 0%, #1d4ed8 56%, #0f766e 100%);
+      display: flex;
+      flex-direction: column;
+      justify-content: flex-end;
+      margin-bottom: 18px;
+    }
+    .cover h1 { color: white; font-size: 34px; max-width: 620px; }
+    .cover p { max-width: 580px; color: #e0f2fe; font-size: 14px; }
+    .notice {
+      border-left: 5px solid #f59e0b;
+      background: #fffbeb;
+      padding: 10px 12px;
+      margin: 12px 0;
+      border-radius: 8px;
+    }
+    .danger {
+      border-left: 5px solid #dc2626;
+      background: #fef2f2;
+      padding: 10px 12px;
+      margin: 12px 0;
+      border-radius: 8px;
+    }
+    .ok {
+      border-left: 5px solid #059669;
+      background: #ecfdf5;
+      padding: 10px 12px;
+      margin: 12px 0;
+      border-radius: 8px;
+    }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .card {
+      border: 1px solid #d9dee8;
+      border-radius: 10px;
+      padding: 12px;
+      background: #fbfdff;
+      break-inside: avoid;
+    }
+    .mini {
+      color: #64748b;
+      font-size: 11.5px;
+    }
+    .kbd {
+      display: inline-block;
+      border: 1px solid #cbd5e1;
+      border-bottom-width: 2px;
+      border-radius: 5px;
+      padding: 0 5px;
+      background: #f8fafc;
+    }
+    .ui {
+      border: 1px solid #cbd5e1;
+      border-radius: 14px;
+      padding: 12px;
+      background: #0f1117;
+      color: #e5e7eb;
+      margin: 12px 0;
+      break-inside: avoid;
+    }
+    .topbar, .panel, .ticket, .tab {
+      border: 1px solid #293241;
+      background: #151922;
+      border-radius: 8px;
+      padding: 8px;
+    }
+    .topbar {
+      display: grid;
+      grid-template-columns: 72px 110px 1fr 70px 88px 84px 94px;
+      gap: 6px;
+      align-items: center;
+      margin-bottom: 10px;
+    }
+    .bodygrid { display: grid; grid-template-columns: 38% 1fr; gap: 10px; }
+    .pill {
+      border-radius: 7px;
+      background: #263244;
+      color: #dbeafe;
+      padding: 6px 7px;
+      text-align: center;
+      min-height: 28px;
+    }
+    .field {
+      display: grid;
+      grid-template-columns: 100px 1fr;
+      gap: 6px;
+      margin: 5px 0;
+      align-items: center;
+    }
+    .input {
+      background: #0b0d12;
+      border: 1px solid #334155;
+      border-radius: 6px;
+      min-height: 26px;
+      padding: 5px 7px;
+      color: #dbeafe;
+    }
+    .button {
+      border-radius: 7px;
+      background: #2563eb;
+      color: white;
+      padding: 8px;
+      text-align: center;
+      margin-top: 6px;
+      font-weight: 600;
+    }
+    .button.gray { background: #303642; }
+    .button.red { background: #b91c1c; }
+    .tabs { display: grid; grid-template-columns: repeat(3, 1fr); gap: 5px; margin-bottom: 8px; }
+    .tabname {
+      background: #273142;
+      color: #e2e8f0;
+      border-radius: 7px;
+      padding: 6px;
+      text-align: center;
+      font-size: 11px;
+    }
+    .row {
+      display: flex;
+      gap: 6px;
+      flex-wrap: wrap;
+      margin: 5px 0;
+    }
+    .tag {
+      background: #e0f2fe;
+      color: #075985;
+      border-radius: 999px;
+      padding: 2px 8px;
+      font-size: 11px;
+      white-space: nowrap;
+    }
+    table {
+      width: 100%;
+      border-collapse: collapse;
+      margin: 8px 0 14px;
+      break-inside: avoid;
+    }
+    th, td {
+      border: 1px solid #d9dee8;
+      padding: 6px 7px;
+      vertical-align: top;
+    }
+    th { background: #f1f5f9; text-align: left; }
+    .pagebreak { page-break-before: always; }
+  </style>
+</head>
+<body>
+  <section class="cover">
+    <h1>Инструкция по Bybit Semi-Auto Bot</h1>
+    <p>Настольный помощник для полуавтоматической торговли фьючерсами Bybit. Бот не входит в сделки самостоятельно: решение принимает трейдер, а программа помогает подготовить заявку, рассчитать риск, выставить SL/TP и контролировать позиции.</p>
+  </section>
+
+  <div class="danger">
+    <strong>Важное предупреждение.</strong> Торговля фьючерсами связана с высоким риском. Используйте сначала демо-режим. Не передавайте никому API secret. В API-ключах не включайте разрешение на вывод средств.
+  </div>
+
+  <h2>1. Что нужно получить от разработчика</h2>
+  <p>Для обычного использования не нужен Python, редактор кода или терминал. Достаточно получить файл:</p>
+  <ul>
+    <li><code>BybitSemiAutoBot.exe</code> - сама программа.</li>
+  </ul>
+  <p>Если рядом есть файл <code>.env.example</code>, он необязателен: ключи можно вписать прямо в программе через кнопку <code>API</code>.</p>
+
+  <h2>2. Первый запуск</h2>
+  <ol>
+    <li>Создайте отдельную папку, например <code>BybitBot</code>.</li>
+    <li>Положите туда <code>BybitSemiAutoBot.exe</code>.</li>
+    <li>Запустите файл двойным кликом.</li>
+    <li>Если Windows SmartScreen покажет предупреждение, выберите “Подробнее” и “Выполнить”, если доверяете источнику файла.</li>
+    <li>В верхней панели нажмите кнопку <code>API</code> и внесите свои ключи Bybit.</li>
+  </ol>
+
+  <div class="ok">
+    После сохранения API-настроек программа сама создаст файл <code>.env</code> рядом с <code>.exe</code>. Этот файл хранит ваши ключи. Его нельзя отправлять другим людям.
+  </div>
+
+  <h2>3. API-ключи Bybit</h2>
+  <p>Откройте Bybit и создайте API-ключ для торговли. Рекомендуемые права:</p>
+  <ul>
+    <li>Разрешить чтение данных аккаунта.</li>
+    <li>Разрешить торговлю деривативами/фьючерсами.</li>
+    <li><strong>Не включать вывод средств.</strong></li>
+  </ul>
+  <p>В программе нажмите <code>API</code>:</p>
+  <ul>
+    <li><strong>Режим:</strong> <code>Демо</code> или <code>Реальный</code>.</li>
+    <li><strong>API key:</strong> публичный ключ.</li>
+    <li><strong>API secret:</strong> секретный ключ. Поле скрыто звездочками, но можно включить “Показать secret”.</li>
+    <li>Нажмите <code>Сохранить</code>.</li>
+  </ul>
+  <div class="notice">
+    Для реальной торговли программа дополнительно спросит подтверждение. Это защита от случайного сохранения live-режима.
+  </div>
+
+  <h2>4. Общая схема интерфейса</h2>
+  <div class="ui">
+    <div class="topbar">
+      <div>Символ</div>
+      <div class="pill">BTCUSDT</div>
+      <div></div>
+      <div class="pill">Режим</div>
+      <div class="pill">API</div>
+      <div class="pill">Тест demo</div>
+      <div class="pill">Обновить</div>
+    </div>
+    <div class="bodygrid">
+      <div class="panel">
+        <div class="tabs">
+          <div class="tabname">Рынок</div>
+          <div class="tabname">Позиции</div>
+          <div class="tabname">Заявки</div>
+        </div>
+        <div class="input">Рыночная цена, баланс, ATR, правила инструмента, текущая позиция</div>
+        <div class="input">Все открытые позиции и управление SL/TP</div>
+        <div class="input">Все открытые заявки, отдельное снятие SL и TP</div>
+      </div>
+      <div class="ticket">
+        <div class="row">
+          <div class="pill" style="flex:1;background:#374151">Продать</div>
+          <div class="pill" style="flex:1;background:#2563eb">Купить</div>
+        </div>
+        <div class="field"><div>Тип заявки</div><div class="input">Рынок / Лимит / Стоп / Стоп-лимит</div></div>
+        <div class="field"><div>Количество</div><div class="input">0.001</div></div>
+        <div class="field"><div>Риск</div><div class="input">Авто количество, авто SL/TP, RR, ATR</div></div>
+        <div class="field"><div>Выход</div><div class="input">Стоп-лосс и тейк-профит</div></div>
+        <div class="field"><div>Настройки</div><div class="input">Плечо, маржа, применять перед заявкой</div></div>
+        <div class="button">Купить / Продать</div>
+        <div class="button gray">Закрыть позицию</div>
+      </div>
+    </div>
+  </div>
+
+  <h2>5. Верхняя панель</h2>
+  <table>
+    <tr><th>Элемент</th><th>Для чего нужен</th></tr>
+    <tr><td><code>Символ</code></td><td>Торговая пара, например <code>BTCUSDT</code>, <code>ETHUSDT</code>. После изменения нажмите <code>Enter</code> или <code>Обновить</code>.</td></tr>
+    <tr><td><code>Режим</code></td><td><code>Демо</code> отправляет заявки в demo trading Bybit. <code>Реальный</code> отправляет заявки на настоящий аккаунт.</td></tr>
+    <tr><td><code>API</code></td><td>Окно для ввода и сохранения API-ключей.</td></tr>
+    <tr><td><code>Тест demo API</code></td><td>Проверяет, что demo-ключи работают. Доступно только в демо-режиме.</td></tr>
+    <tr><td><code>Обновить</code></td><td>Загружает рынок, баланс, правила инструмента, позиции, заявки и ATR.</td></tr>
+  </table>
+
+  <h2>6. Левая колонка: Рынок, Позиции, Заявки</h2>
+  <h3>Вкладка “Рынок”</h3>
+  <p>Показывает данные по выбранному символу:</p>
+  <ul>
+    <li>последнюю цену и mark price;</li>
+    <li>баланс USDT, если API-ключи сохранены;</li>
+    <li>дневной ATR;</li>
+    <li>минимальное количество, шаг количества, тик цены и минимальную сумму заявки;</li>
+    <li>EMA-сигнал как вспомогательную подсказку;</li>
+    <li>позицию по текущему символу.</li>
+  </ul>
+
+  <h3>Вкладка “Позиции”</h3>
+  <p>Показывает все открытые позиции, а не только текущий символ. В карточке позиции есть:</p>
+  <ul>
+    <li><code>Выбрать</code> - поставить символ позиции в верхнее поле и обновить данные.</li>
+    <li><code>Закрыть</code> - закрыть эту позицию рыночной заявкой.</li>
+    <li><code>SL</code> - изменить или убрать только стоп-лосс.</li>
+    <li><code>TP</code> - изменить или убрать только тейк-профит.</li>
+  </ul>
+  <div class="notice">
+    Если убрать SL через кнопку <code>SL</code>, TP останется. Если убрать TP через кнопку <code>TP</code>, SL останется.
+  </div>
+
+  <h3>Вкладка “Заявки”</h3>
+  <p>Показывает открытые заявки по всем символам. Обычные заявки можно отменить кнопкой <code>Отменить</code>. Для защитных заявок кнопки называются <code>Убрать SL</code> или <code>Убрать TP</code>, чтобы случайно не снять оба уровня сразу.</p>
+
+  <h2>7. Правая колонка: торговая заявка</h2>
+  <h3>Выбор стороны</h3>
+  <p>Вверху правой колонки две большие кнопки:</p>
+  <ul>
+    <li><code>Купить</code> - long.</li>
+    <li><code>Продать</code> - short.</li>
+  </ul>
+  <p>Расчет SL/TP зависит от выбранной стороны. Для покупки стоп ставится ниже входа, тейк выше. Для продажи наоборот.</p>
+
+  <h3>Тип заявки</h3>
+  <table>
+    <tr><th>Тип</th><th>Какие поля нужны</th><th>Когда использовать</th></tr>
+    <tr><td><code>Рынок</code></td><td>Количество</td><td>Войти сразу по рынку.</td></tr>
+    <tr><td><code>Лимит</code></td><td>Количество, цена, время действия</td><td>Войти только по указанной цене или лучше.</td></tr>
+    <tr><td><code>Стоп</code></td><td>Количество, стоп-цена, условие, источник цены</td><td>Рыночная заявка после достижения триггера.</td></tr>
+    <tr><td><code>Стоп-лимит</code></td><td>Количество, лимитная цена, стоп-цена, условие, источник цены</td><td>Лимитная заявка после достижения триггера.</td></tr>
+  </table>
+  <p>Программа показывает только те поля, которые нужны для выбранного типа заявки.</p>
+
+  <h2>8. Риск и расчет</h2>
+  <p>Этот блок помогает рассчитать стоп-лосс, тейк-профит и количество.</p>
+  <table>
+    <tr><th>Поле</th><th>Значение</th></tr>
+    <tr><td><code>Авто количество</code></td><td>Если включено, бот считает размер позиции от риска, баланса и расстояния до стопа.</td></tr>
+    <tr><td><code>Авто SL/TP</code></td><td>Если включено, перед отправкой заявки бот сам рассчитает и заполнит SL/TP.</td></tr>
+    <tr><td><code>Риск сделки, %</code></td><td>Сколько процентов баланса вы готовы потерять, если сработает стоп.</td></tr>
+    <tr><td><code>Дневной лимит, %</code></td><td>Максимальный риск на день. Если риск сделки больше лимита, расчет блокируется.</td></tr>
+    <tr><td><code>Стоп</code></td><td>Выбор способа расчета стопа: ручной процент или варианты от дневного ATR.</td></tr>
+    <tr><td><code>RR</code></td><td>Соотношение риск/прибыль. Например, <code>3</code> означает 1:3.</td></tr>
+    <tr><td><code>Профит, %</code></td><td>Прямая цель по проценту от цены, если выбран режим “Процент профита”.</td></tr>
+  </table>
+
+  <h3>Варианты стопа</h3>
+  <ul>
+    <li><code>Ручной %</code> - вы сами задаете расстояние стопа в процентах.</li>
+    <li><code>ATR по тренду 10%</code> - стоп считается как 10% от дневного ATR.</li>
+    <li><code>ATR по тренду 15%</code> - стоп считается как 15% от дневного ATR.</li>
+    <li><code>ATR против тренда 5%</code> - стоп считается как 5% от дневного ATR.</li>
+  </ul>
+
+  <div class="card">
+    <h3>Пример расчета</h3>
+    <p>Цена BTC: 100 000. Выбрана покупка. Стоп: 1%. RR: 3.</p>
+    <ul>
+      <li>Стоп-лосс: 99 000.</li>
+      <li>Тейк-профит: 103 000.</li>
+      <li>Если баланс 1000 USDT и риск 0.5%, риск в деньгах: 5 USDT.</li>
+      <li>Количество считается так, чтобы при стопе потеря была около 5 USDT.</li>
+    </ul>
+  </div>
+
+  <h2>9. Уровни выхода</h2>
+  <p>Можно вручную указать:</p>
+  <ul>
+    <li><code>Стоп-лосс</code> - цена защитного стопа.</li>
+    <li><code>Тейк-профит</code> - цена фиксации прибыли.</li>
+  </ul>
+  <p>Кнопка <code>Очистить SL/TP</code> очищает поля в форме заявки. Она не снимает уже выставленные уровни у открытой позиции.</p>
+
+  <h2>10. Плечо и маржа</h2>
+  <p>В блоке “Дополнительные настройки” доступны:</p>
+  <ul>
+    <li><code>Плечо</code> - желаемое кредитное плечо.</li>
+    <li><code>Маржа</code> - <code>Кросс</code> или <code>Изолированная</code>.</li>
+    <li><code>Применить маржу/плечо</code> - отправить настройки на Bybit.</li>
+    <li><code>Применять перед заявкой</code> - попытаться применить плечо и маржу автоматически перед отправкой ордера.</li>
+  </ul>
+  <div class="notice">
+    Bybit может отказать в смене плеча или маржи, если есть открытая позиция, активные заявки или ограничения аккаунта. Такие ответы записываются в журнал ошибок.
+  </div>
+
+  <h2>11. Чек-лист перед сделкой</h2>
+  <p>Перед отправкой заявки бот показывает чек-лист. Без обязательных пунктов продолжить нельзя.</p>
+  <h3>Сценарии</h3>
+  <p>Можно выбрать: отбой от уровня, пробой, ложный пробой 1 бар, ложный пробой 2 бара, сложный ложный пробой, БСУ-БПУ или другое.</p>
+  <h3>Обязательные пункты</h3>
+  <ul>
+    <li>Уровень отмечен на дневке/неделе/месяце и подтвержден справа.</li>
+    <li>Сценарий входа соответствует выбранной стороне и типу заявки.</li>
+    <li>SL и TP выставлены, риск/прибыль не хуже 1:3 или осознанно принят другой риск.</li>
+    <li>Риск сделки вписывается в дневной лимит, нет запрета после серии убытков.</li>
+  </ul>
+  <h3>Дополнительный контекст</h3>
+  <ul>
+    <li>ATR не исчерпан.</li>
+    <li>Понятно, откуда пришла энергия движения.</li>
+    <li>Есть запас хода до следующего сильного уровня.</li>
+    <li>Подход к уровню прочитан.</li>
+  </ul>
+  <p>Если дополнительные пункты не отмечены, бот спросит, хотите ли вы продолжить осознанно.</p>
+
+  <h2>12. Как открыть сделку</h2>
+  <ol>
+    <li>Введите символ, например <code>BTCUSDT</code>.</li>
+    <li>Нажмите <code>Обновить</code>.</li>
+    <li>Выберите сторону: <code>Купить</code> или <code>Продать</code>.</li>
+    <li>Выберите тип заявки.</li>
+    <li>Введите количество или включите <code>Авто количество</code>.</li>
+    <li>Заполните SL/TP вручную или включите <code>Авто SL/TP</code> и нажмите расчет.</li>
+    <li>При необходимости настройте плечо и маржу.</li>
+    <li>Нажмите большую кнопку <code>Купить</code> или <code>Продать</code>.</li>
+    <li>Заполните чек-лист.</li>
+    <li>Проверьте финальное окно подтверждения и подтвердите заявку.</li>
+  </ol>
+
+  <h2>13. Как закрыть позицию</h2>
+  <p>Есть два способа:</p>
+  <ul>
+    <li>Если позиция по текущему символу, нажмите <code>Закрыть позицию</code> в правой колонке.</li>
+    <li>Если позиция по другому символу, откройте вкладку <code>Позиции</code> и нажмите <code>Закрыть</code> на нужной карточке.</li>
+  </ul>
+  <p>Закрытие отправляется рыночной заявкой в противоположную сторону.</p>
+
+  <h2>14. Как изменить или убрать SL/TP</h2>
+  <ul>
+    <li>Откройте вкладку <code>Позиции</code>.</li>
+    <li>Найдите нужный символ.</li>
+    <li>Нажмите <code>SL</code>, чтобы изменить или убрать стоп-лосс.</li>
+    <li>Нажмите <code>TP</code>, чтобы изменить или убрать тейк-профит.</li>
+  </ul>
+  <p>Также во вкладке <code>Заявки</code> защитные уровни имеют отдельные кнопки <code>Убрать SL</code> и <code>Убрать TP</code>.</p>
+
+  <h2>15. Ошибки и диагностика</h2>
+  <p>Если Bybit отклоняет запрос, бот показывает сообщение и записывает его в журнал ошибок. Самые частые причины:</p>
+  <ul>
+    <li>слишком маленькое количество;</li>
+    <li>сумма заявки ниже минимума Bybit;</li>
+    <li>неверные API-ключи;</li>
+    <li>ключи не подходят к выбранному режиму demo/live;</li>
+    <li>Bybit не разрешает сменить плечо или маржу при текущем состоянии позиции;</li>
+    <li>нет соединения с интернетом.</li>
+  </ul>
+  <p>При обращении за помощью скопируйте последнюю строку из журнала ошибок.</p>
+
+  <h2>16. Обновление программы</h2>
+  <ol>
+    <li>Закройте старый бот.</li>
+    <li>Получите новый <code>BybitSemiAutoBot.exe</code>.</li>
+    <li>Замените старый exe новым.</li>
+    <li>Файл <code>.env</code> с вашими ключами оставьте рядом, его заменять не нужно.</li>
+    <li>Запустите новый exe.</li>
+  </ol>
+
+  <h2>17. Короткая памятка безопасности</h2>
+  <div class="danger">
+    <ul>
+      <li>Сначала проверяйте все на demo.</li>
+      <li>Не храните API secret в переписках и скриншотах.</li>
+      <li>Не включайте withdrawal permissions.</li>
+      <li>Перед реальной сделкой всегда проверяйте символ, сторону, количество, SL, TP и режим.</li>
+      <li>Бот помогает оформить сделку, но не гарантирует прибыль.</li>
+    </ul>
+  </div>
+</body>
+</html>

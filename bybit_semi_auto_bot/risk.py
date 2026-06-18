@@ -20,6 +20,13 @@ class PositionSize:
     estimated_margin: float
 
 
+@dataclass(frozen=True)
+class AtrSnapshot:
+    value: float
+    bars_used: int
+    interval: str
+
+
 def calculate_risk_prices(
     side: str,
     entry_price: float,
@@ -89,6 +96,25 @@ def calculate_position_size(
         position_value=position_value,
         estimated_margin=estimated_margin,
     )
+
+
+def calculate_simple_atr(candles: list[dict[str, float]], bars: int = 5, interval: str = "D") -> AtrSnapshot:
+    ranges = [row["high"] - row["low"] for row in candles if row.get("high", 0) > row.get("low", 0)]
+    if len(ranges) < bars:
+        raise ValueError(f"Need at least {bars} candles to calculate ATR.")
+    selected = ranges[-bars:]
+    return AtrSnapshot(value=sum(selected) / len(selected), bars_used=len(selected), interval=interval)
+
+
+def atr_stop_percent(entry_price: float, atr_value: float, atr_percent: float) -> float:
+    if entry_price <= 0:
+        raise ValueError("Entry price must be greater than zero.")
+    if atr_value <= 0:
+        raise ValueError("ATR must be greater than zero.")
+    if atr_percent <= 0:
+        raise ValueError("ATR percent must be greater than zero.")
+    stop_distance = atr_value * atr_percent / 100
+    return stop_distance / entry_price * 100
 
 
 def format_price(value: float) -> str:
